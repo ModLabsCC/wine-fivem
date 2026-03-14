@@ -254,25 +254,68 @@ BOOLEAN CDECL RtlDeleteFunctionTable( RUNTIME_FUNCTION *table )
 }
 
 
+struct rtlpx_function_table_data
+{
+    ULONG_PTR table_address;
+    ULONG_PTR image_base;
+    ULONG image_size;
+    ULONG size;
+};
+
+static DECLSPEC_NOINLINE PRUNTIME_FUNCTION WINAPI rtlpx_lookup_function_table_internal( void *exception_address,
+                                                                                        struct rtlpx_function_table_data *data )
+{
+    LDR_DATA_TABLE_ENTRY *module;
+    PRUNTIME_FUNCTION table;
+    ULONG size = 0;
+
+    memset( data, 0, sizeof(*data) );
+    if (LdrFindEntryForAddress( exception_address, &module )) return NULL;
+
+    data->image_base = (ULONG_PTR)module->DllBase;
+    data->image_size = module->SizeOfImage;
+#ifdef __arm64ec__
+    if (RtlIsEcCode( (ULONG_PTR)exception_address ))
+    {
+        IMAGE_ARM64EC_METADATA *metadata = arm64ec_get_module_metadata( module->DllBase );
+        if (!metadata) return NULL;
+        data->size = metadata->ExtraRFETableSize;
+        data->table_address = data->image_base + metadata->ExtraRFETable;
+        return (RUNTIME_FUNCTION *)data->table_address;
+    }
+#endif
+    table = RtlImageDirectoryEntryToData( module->DllBase, TRUE, IMAGE_DIRECTORY_ENTRY_EXCEPTION, &size );
+    data->table_address = (ULONG_PTR)table;
+    data->size = size;
+    return table;
+}
+
 /**********************************************************************
  *              RtlLookupFunctionTable   (NTDLL.@)
  */
 PRUNTIME_FUNCTION WINAPI RtlLookupFunctionTable( ULONG_PTR pc, ULONG_PTR *base, ULONG *len )
 {
-    LDR_DATA_TABLE_ENTRY *module;
+    struct rtlpx_function_table_data data;
+    PRUNTIME_FUNCTION table = rtlpx_lookup_function_table_internal( (void *)pc, &data );
 
-    if (LdrFindEntryForAddress( (void *)pc, &module )) return NULL;
-    *base = (ULONG_PTR)module->DllBase;
-#ifdef __arm64ec__
-    if (RtlIsEcCode( pc ))
-    {
-        IMAGE_ARM64EC_METADATA *metadata = arm64ec_get_module_metadata( module->DllBase );
-        if (!metadata) return NULL;
-        *len = metadata->ExtraRFETableSize;
-        return (RUNTIME_FUNCTION *)(*base + metadata->ExtraRFETable);
-    }
-#endif
-    return RtlImageDirectoryEntryToData( module->DllBase, TRUE, IMAGE_DIRECTORY_ENTRY_EXCEPTION, len );
+    if (!table) return NULL;
+    if (base) *base = data.image_base;
+    if (len) *len = data.size;
+    return table;
+}
+
+/**********************************************************************
+ *              RtlpxLookupFunctionTable   (NTDLL.@)
+ */
+PRUNTIME_FUNCTION WINAPI RtlpxLookupFunctionTable( ULONG_PTR pc, ULONG_PTR *base, ULONG *len )
+{
+    struct rtlpx_function_table_data data;
+    PRUNTIME_FUNCTION table = rtlpx_lookup_function_table_internal( (void *)pc, &data );
+
+    if (!table) return NULL;
+    if (base) *base = data.image_base;
+    if (len) *len = data.size;
+    return table;
 }
 
 
@@ -2046,7 +2089,7 @@ NTSTATUS WINAPI RtlVirtualUnwind2( ULONG type, ULONG_PTR base, ULONG_PTR pc,
     BOOL mach_frame = FALSE, chained = FALSE;
 
 #ifdef __arm64ec__
-    if (RtlIsEcCode( pc ))
+    if (RtlIsEcCode( (ULONG_PTR)exception_address ))
     {
         DWORD flags = context->ContextFlags & ~CONTEXT_UNWOUND_TO_CALL;
         ARM64_NT_CONTEXT arm_context;
@@ -2230,7 +2273,7 @@ EXCEPTION_DISPOSITION WINAPI __C_specific_handler( EXCEPTION_RECORD *rec, void *
     unsigned int i;
 
 #ifdef __arm64ec__
-    if (RtlIsEcCode( pc ))
+    if (RtlIsEcCode( (ULONG_PTR)exception_address ))
         return __C_specific_handler_arm64( rec, frame, (ARM64_NT_CONTEXT *)context,
                                            (DISPATCHER_CONTEXT_ARM64 *)dispatch );
 #endif
@@ -2306,7 +2349,7 @@ PRUNTIME_FUNCTION WINAPI RtlLookupFunctionEntry( ULONG_PTR pc, ULONG_PTR *base,
     ULONG size;
 
 #ifdef __arm64ec__
-    if (RtlIsEcCode( pc ))
+    if (RtlIsEcCode( (ULONG_PTR)exception_address ))
         return (RUNTIME_FUNCTION *)RtlLookupFunctionEntry_arm64( pc, base, table );
 #endif
 

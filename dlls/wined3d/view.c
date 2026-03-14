@@ -370,6 +370,30 @@ static void wined3d_view_invalidate_location(struct wined3d_resource *resource,
         wined3d_texture_invalidate_location(texture, sub_resource_idx, location);
 }
 
+static void wined3d_view_validate_location(struct wined3d_resource *resource,
+        const struct wined3d_view_desc *desc, DWORD location)
+{
+    unsigned int i, sub_resource_idx;
+    struct wined3d_texture *texture;
+
+    if (resource->type == WINED3D_RTYPE_BUFFER)
+    {
+        wined3d_buffer_validate_location(buffer_from_resource(resource), location);
+        return;
+    }
+
+    texture = texture_from_resource(resource);
+    if (resource->type == WINED3D_RTYPE_TEXTURE_3D)
+    {
+        wined3d_texture_validate_location(texture, desc->u.texture.level_idx, location);
+        return;
+    }
+
+    sub_resource_idx = desc->u.texture.layer_idx * texture->level_count + desc->u.texture.level_idx;
+    for (i = 0; i < desc->u.texture.layer_count; ++i, sub_resource_idx += texture->level_count)
+        wined3d_texture_validate_location(texture, sub_resource_idx, location);
+}
+
 static void wined3d_view_load_location(struct wined3d_resource *resource,
         const struct wined3d_view_desc *desc, struct wined3d_context *context, DWORD location)
 {
@@ -434,6 +458,19 @@ void * CDECL wined3d_rendertarget_view_get_parent(const struct wined3d_rendertar
     TRACE("view %p.\n", view);
 
     return view->parent;
+}
+
+void CDECL wined3d_rendertarget_view_discard(struct wined3d_rendertarget_view *view)
+{
+    TRACE("view %p.\n", view);
+
+    if (!view)
+        return;
+
+    wined3d_mutex_lock();
+    wined3d_view_validate_location(view->resource, &view->desc, WINED3D_LOCATION_DISCARDED);
+    wined3d_view_invalidate_location(view->resource, &view->desc, ~WINED3D_LOCATION_DISCARDED);
+    wined3d_mutex_unlock();
 }
 
 void * CDECL wined3d_rendertarget_view_get_sub_resource_parent(const struct wined3d_rendertarget_view *view)
@@ -1059,6 +1096,19 @@ void * CDECL wined3d_shader_resource_view_get_parent(const struct wined3d_shader
     return view->parent;
 }
 
+void CDECL wined3d_shader_resource_view_discard(struct wined3d_shader_resource_view *view)
+{
+    TRACE("view %p.\n", view);
+
+    if (!view)
+        return;
+
+    wined3d_mutex_lock();
+    wined3d_view_validate_location(view->resource, &view->desc, WINED3D_LOCATION_DISCARDED);
+    wined3d_view_invalidate_location(view->resource, &view->desc, ~WINED3D_LOCATION_DISCARDED);
+    wined3d_mutex_unlock();
+}
+
 void wined3d_shader_resource_view_gl_update(struct wined3d_shader_resource_view_gl *srv_gl,
         struct wined3d_context_gl *context_gl)
 {
@@ -1598,6 +1648,19 @@ void * CDECL wined3d_unordered_access_view_get_parent(const struct wined3d_unord
     TRACE("view %p.\n", view);
 
     return view->parent;
+}
+
+void CDECL wined3d_unordered_access_view_discard(struct wined3d_unordered_access_view *view)
+{
+    TRACE("view %p.\n", view);
+
+    if (!view)
+        return;
+
+    wined3d_mutex_lock();
+    wined3d_view_validate_location(view->resource, &view->desc, WINED3D_LOCATION_DISCARDED);
+    wined3d_view_invalidate_location(view->resource, &view->desc, ~WINED3D_LOCATION_DISCARDED);
+    wined3d_mutex_unlock();
 }
 
 void wined3d_unordered_access_view_invalidate_location(struct wined3d_unordered_access_view *view,

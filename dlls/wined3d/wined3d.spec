@@ -203,11 +203,13 @@
 @ cdecl wined3d_rendertarget_view_decref(ptr)
 @ cdecl wined3d_rendertarget_view_get_parent(ptr)
 @ cdecl wined3d_rendertarget_view_get_resource(ptr)
+@ cdecl wined3d_rendertarget_view_discard(ptr)
 @ cdecl wined3d_rendertarget_view_get_sub_resource_parent(ptr)
 @ cdecl wined3d_rendertarget_view_incref(ptr)
 @ cdecl wined3d_rendertarget_view_set_parent(ptr ptr ptr)
 
 @ cdecl wined3d_resource_get_desc(ptr ptr)
+@ cdecl wined3d_resource_discard(ptr)
 @ cdecl wined3d_resource_get_parent(ptr)
 @ cdecl wined3d_resource_get_priority(ptr)
 @ cdecl wined3d_resource_get_sub_resource_count(ptr)
@@ -238,6 +240,7 @@
 @ cdecl wined3d_shader_resource_view_create(ptr ptr ptr ptr ptr)
 @ cdecl wined3d_shader_resource_view_decref(ptr)
 @ cdecl wined3d_shader_resource_view_get_parent(ptr)
+@ cdecl wined3d_shader_resource_view_discard(ptr)
 @ cdecl wined3d_shader_resource_view_incref(ptr)
 
 @ cdecl wined3d_state_create(ptr ptr long ptr)
@@ -347,6 +350,7 @@
 @ cdecl wined3d_unordered_access_view_create(ptr ptr ptr ptr ptr)
 @ cdecl wined3d_unordered_access_view_decref(ptr)
 @ cdecl wined3d_unordered_access_view_get_parent(ptr)
+@ cdecl wined3d_unordered_access_view_discard(ptr)
 @ cdecl wined3d_unordered_access_view_incref(ptr)
 
 @ cdecl wined3d_vertex_declaration_create(ptr ptr long ptr ptr ptr)

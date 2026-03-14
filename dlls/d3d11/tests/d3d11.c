@@ -2514,6 +2514,109 @@ done:
     ok(!refcount, "Device has %lu references left.\n", refcount);
 }
 
+static void test_discard(void)
+{
+    D3D11_UNORDERED_ACCESS_VIEW_DESC uav_desc;
+    D3D11_TEXTURE2D_DESC texture_desc, depth_desc;
+    ID3D11DeviceContext4 *context4 = NULL;
+    ID3D11DepthStencilView *dsv = NULL;
+    ID3D11Texture2D *texture = NULL;
+    ID3D11Texture2D *depth = NULL;
+    ID3D11DeviceContext *context;
+    ID3D11Resource *buffer = NULL;
+    ID3D11RenderTargetView *rtv = NULL;
+    ID3D11ShaderResourceView *srv = NULL;
+    ID3D11UnorderedAccessView *uav = NULL;
+    ID3D11Device *device;
+    HRESULT hr;
+
+    if (!(device = create_device(NULL)))
+    {
+        skip("Failed to create device.\n");
+        return;
+    }
+
+    ID3D11Device_GetImmediateContext(device, &context);
+    hr = ID3D11DeviceContext_QueryInterface(context, &IID_ID3D11DeviceContext4, (void **)&context4);
+    if (hr == E_NOINTERFACE)
+    {
+        win_skip("ID3D11DeviceContext4 is not supported.\n");
+        goto done;
+    }
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    memset(&texture_desc, 0, sizeof(texture_desc));
+    texture_desc.Width = 64;
+    texture_desc.Height = 64;
+    texture_desc.MipLevels = 1;
+    texture_desc.ArraySize = 1;
+    texture_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    texture_desc.SampleDesc.Count = 1;
+    texture_desc.Usage = D3D11_USAGE_DEFAULT;
+    texture_desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    hr = ID3D11Device_CreateTexture2D(device, &texture_desc, NULL, &texture);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)texture, NULL, &rtv);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)texture, NULL, &srv);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    memset(&depth_desc, 0, sizeof(depth_desc));
+    depth_desc.Width = 64;
+    depth_desc.Height = 64;
+    depth_desc.MipLevels = 1;
+    depth_desc.ArraySize = 1;
+    depth_desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    depth_desc.SampleDesc.Count = 1;
+    depth_desc.Usage = D3D11_USAGE_DEFAULT;
+    depth_desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+    hr = ID3D11Device_CreateTexture2D(device, &depth_desc, NULL, &depth);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID3D11Device_CreateDepthStencilView(device, (ID3D11Resource *)depth, NULL, &dsv);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    buffer = (ID3D11Resource *)create_buffer(device, D3D11_BIND_UNORDERED_ACCESS, 1024, NULL);
+    memset(&uav_desc, 0, sizeof(uav_desc));
+    uav_desc.Format = DXGI_FORMAT_R32_UINT;
+    uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+    uav_desc.Buffer.FirstElement = 0;
+    uav_desc.Buffer.NumElements = 256;
+    hr = ID3D11Device_CreateUnorderedAccessView(device, buffer, &uav_desc, &uav);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    ID3D11DeviceContext4_DiscardResource(context4, (ID3D11Resource *)texture);
+    ID3D11DeviceContext4_DiscardResource(context4, buffer);
+    ID3D11DeviceContext4_DiscardView(context4, (ID3D11View *)rtv);
+    ID3D11DeviceContext4_DiscardView(context4, (ID3D11View *)srv);
+    ID3D11DeviceContext4_DiscardView(context4, (ID3D11View *)dsv);
+    ID3D11DeviceContext4_DiscardView(context4, (ID3D11View *)uav);
+    ID3D11DeviceContext4_DiscardView1(context4, (ID3D11View *)rtv, NULL, 0);
+
+    ID3D11DeviceContext_ClearRenderTargetView(context, rtv, (const float[]){0.0f, 0.0f, 0.0f, 0.0f});
+    ID3D11DeviceContext_ClearDepthStencilView(context, dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+
+done:
+    if (uav)
+        ID3D11UnorderedAccessView_Release(uav);
+    if (buffer)
+        ID3D11Resource_Release(buffer);
+    if (dsv)
+        ID3D11DepthStencilView_Release(dsv);
+    if (depth)
+        ID3D11Texture2D_Release(depth);
+    if (srv)
+        ID3D11ShaderResourceView_Release(srv);
+    if (rtv)
+        ID3D11RenderTargetView_Release(rtv);
+    if (texture)
+        ID3D11Texture2D_Release(texture);
+    if (context4)
+        ID3D11DeviceContext4_Release(context4);
+    ID3D11DeviceContext_Release(context);
+    ID3D11Device_Release(device);
+}
+
 static void test_create_deferred_context(void)
 {
     ULONG refcount, expected_refcount;
@@ -37570,6 +37673,7 @@ START_TEST(d3d11)
     queue_test(test_create_device);
     queue_for_each_feature_level(test_device_interfaces);
     queue_test(test_immediate_context);
+    queue_test(test_discard);
     queue_test(test_create_deferred_context);
     queue_test(test_create_texture1d);
     queue_test(test_texture1d_interfaces);

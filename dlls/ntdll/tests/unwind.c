@@ -40,6 +40,7 @@ static HMODULE ntdll;
 
 static PRUNTIME_FUNCTION (WINAPI *pRtlLookupFunctionEntry)(ULONG_PTR, ULONG_PTR*, UNWIND_HISTORY_TABLE*);
 static PRUNTIME_FUNCTION (WINAPI *pRtlLookupFunctionTable)(ULONG_PTR, ULONG_PTR*, ULONG*);
+static PRUNTIME_FUNCTION (WINAPI *pRtlpxLookupFunctionTable)(ULONG_PTR, ULONG_PTR*, ULONG*);
 static BOOLEAN   (CDECL *pRtlInstallFunctionTableCallback)(DWORD64, DWORD64, DWORD, PGET_RUNTIME_FUNCTION_CALLBACK, PVOID, PCWSTR);
 static BOOLEAN   (CDECL  *pRtlAddFunctionTable)(RUNTIME_FUNCTION*, DWORD, DWORD64);
 static BOOLEAN   (CDECL  *pRtlDeleteFunctionTable)(RUNTIME_FUNCTION*);
@@ -3936,6 +3937,26 @@ static void test_dynamic_unwind(void)
 }
 
 
+static void test_rtlpx_lookup_function_table(void)
+{
+    ULONG_PTR base, base2;
+    ULONG len, len2;
+    PRUNTIME_FUNCTION func, func2;
+
+    ok( !!pRtlpxLookupFunctionTable, "RtlpxLookupFunctionTable export is missing\n" );
+    if (!pRtlpxLookupFunctionTable || !pRtlLookupFunctionTable) return;
+
+    base = base2 = 0xdeadbeef;
+    len = len2 = 0xdeadbeef;
+    func = pRtlpxLookupFunctionTable( (ULONG_PTR)pRtlLookupFunctionTable, &base, &len );
+    func2 = pRtlLookupFunctionTable( (ULONG_PTR)pRtlLookupFunctionTable, &base2, &len2 );
+
+    ok( func == func2, "wrong table %p / %p\n", func, func2 );
+    ok( base == base2, "wrong base %Ix / %Ix\n", base, base2 );
+    ok( len == len2, "wrong len %lu / %lu\n", len, len2 );
+}
+
+
 START_TEST(unwind)
 {
     ntdll = GetModuleHandleA("ntdll.dll");
@@ -3951,6 +3972,7 @@ START_TEST(unwind)
     X(RtlInstallFunctionTableCallback);
     X(RtlLookupFunctionEntry);
     X(RtlLookupFunctionTable);
+    X(RtlpxLookupFunctionTable);
     X(RtlVirtualUnwind2);
 #undef X
 
@@ -3962,6 +3984,8 @@ START_TEST(unwind)
     test_virtual_unwind_x86();
     test_virtual_unwind_arm64();
 #endif
+
+    test_rtlpx_lookup_function_table();
 
     test_dynamic_unwind();
 }

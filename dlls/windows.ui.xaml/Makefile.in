@@ -1,7 +1,10 @@
 MODULE  = windows.ui.xaml.dll
-IMPORTS = combase
+IMPORTS = combase user32
 
 SOURCES = \
 	classes.idl \
 	color_helper.c \
-	main.c
+	main.c \
+	desktop_window_xaml_source.c \
+	xaml_manager.c \
+	xaml_reader.c

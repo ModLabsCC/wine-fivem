@@ -2779,15 +2779,78 @@ static void STDMETHODCALLTYPE d3d11_device_context_UpdateSubresource1(ID3D11Devi
             box ? &wined3d_box : NULL, data, row_pitch, depth_pitch, flags);
 }
 
+static void d3d11_discard_view(ID3D11View *view)
+{
+    ID3D11RenderTargetView *rtv;
+    ID3D11DepthStencilView *dsv;
+    ID3D11ShaderResourceView *srv;
+    ID3D11UnorderedAccessView *uav;
+    struct d3d_rendertarget_view *rtv_impl;
+    struct d3d_depthstencil_view *dsv_impl;
+    struct d3d_shader_resource_view *srv_impl;
+    struct d3d11_unordered_access_view *uav_impl;
+
+    if (!view)
+        return;
+
+    if (SUCCEEDED(ID3D11View_QueryInterface(view, &IID_ID3D11RenderTargetView, (void **)&rtv)))
+    {
+        rtv_impl = unsafe_impl_from_ID3D11RenderTargetView(rtv);
+        ID3D11RenderTargetView_Release(rtv);
+        if (rtv_impl)
+            wined3d_rendertarget_view_discard(rtv_impl->wined3d_view);
+        return;
+    }
+
+    if (SUCCEEDED(ID3D11View_QueryInterface(view, &IID_ID3D11DepthStencilView, (void **)&dsv)))
+    {
+        dsv_impl = unsafe_impl_from_ID3D11DepthStencilView(dsv);
+        ID3D11DepthStencilView_Release(dsv);
+        if (dsv_impl)
+            wined3d_rendertarget_view_discard(dsv_impl->wined3d_view);
+        return;
+    }
+
+    if (SUCCEEDED(ID3D11View_QueryInterface(view, &IID_ID3D11UnorderedAccessView, (void **)&uav)))
+    {
+        uav_impl = unsafe_impl_from_ID3D11UnorderedAccessView(uav);
+        ID3D11UnorderedAccessView_Release(uav);
+        if (uav_impl)
+            wined3d_unordered_access_view_discard(uav_impl->wined3d_view);
+        return;
+    }
+
+    if (SUCCEEDED(ID3D11View_QueryInterface(view, &IID_ID3D11ShaderResourceView, (void **)&srv)))
+    {
+        srv_impl = unsafe_impl_from_ID3D11ShaderResourceView(srv);
+        ID3D11ShaderResourceView_Release(srv);
+        if (srv_impl)
+            wined3d_shader_resource_view_discard(srv_impl->wined3d_view);
+        return;
+    }
+
+    FIXME("Unhandled view %p.\n", view);
+}
+
 static void STDMETHODCALLTYPE d3d11_device_context_DiscardResource(ID3D11DeviceContext4 *iface,
         ID3D11Resource *resource)
 {
-    FIXME("iface %p, resource %p stub!\n", iface, resource);
+    struct wined3d_resource *wined3d_resource;
+
+    TRACE("iface %p, resource %p.\n", iface, resource);
+
+    if (!resource)
+        return;
+
+    wined3d_resource = wined3d_resource_from_d3d11_resource(resource);
+    wined3d_resource_discard(wined3d_resource);
 }
 
 static void STDMETHODCALLTYPE d3d11_device_context_DiscardView(ID3D11DeviceContext4 *iface, ID3D11View *view)
 {
-    FIXME("iface %p, view %p stub!\n", iface, view);
+    TRACE("iface %p, view %p.\n", iface, view);
+
+    d3d11_discard_view(view);
 }
 
 static void STDMETHODCALLTYPE d3d11_device_context_VSSetConstantBuffers1(ID3D11DeviceContext4 *iface,
@@ -2968,7 +3031,12 @@ static void STDMETHODCALLTYPE d3d11_device_context_ClearView(ID3D11DeviceContext
 static void STDMETHODCALLTYPE d3d11_device_context_DiscardView1(ID3D11DeviceContext4 *iface, ID3D11View *view,
         const D3D11_RECT *rects, UINT num_rects)
 {
-    FIXME("iface %p, view %p, rects %p, num_rects %u stub!\n", iface, view, rects, num_rects);
+    TRACE("iface %p, view %p, rects %p, num_rects %u.\n", iface, view, rects, num_rects);
+
+    if (rects && num_rects)
+        FIXME("Ignoring rects %p, num_rects %u.\n", rects, num_rects);
+
+    d3d11_discard_view(view);
 }
 
 static HRESULT STDMETHODCALLTYPE d3d11_device_context_UpdateTileMappings(ID3D11DeviceContext4 *iface,

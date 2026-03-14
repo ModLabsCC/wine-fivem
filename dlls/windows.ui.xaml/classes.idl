@@ -22,7 +22,96 @@
 #pragma winrt ns_prefix
 
 import "windows.ui.idl";
+import "windows.ui.xaml.idl";
 
 namespace Windows.UI {
     runtimeclass ColorHelper;
+}
+
+namespace Windows.UI.Xaml.Hosting {
+    [
+        contract(Windows.Foundation.UniversalApiContract, 8.0),
+        uuid(56096c31-1aa0-5288-8818-6e74a2dcaff5)
+    ]
+    interface IWindowsXamlManager : IInspectable
+    {
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 8.0),
+        uuid(28258a12-7d82-505b-b210-712b04a58882)
+    ]
+    interface IWindowsXamlManagerStatics : IInspectable
+    {
+        HRESULT InitializeForCurrentThread([out, retval] IInspectable **value);
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 8.0),
+        marshaling_behavior(agile),
+        static(Windows.UI.Xaml.Hosting.IWindowsXamlManagerStatics, Windows.Foundation.UniversalApiContract, 8.0),
+        threading(both)
+    ]
+    runtimeclass WindowsXamlManager
+    {
+        [default] interface Windows.UI.Xaml.Hosting.IWindowsXamlManager;
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 8.0),
+        uuid(d585bfe1-00ff-51be-ba1d-a1329956ea0a)
+    ]
+    interface IDesktopWindowXamlSource : IInspectable
+    {
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 8.0),
+        uuid(5cd61dc0-2561-56e1-8e75-6e44173805e3)
+    ]
+    interface IDesktopWindowXamlSourceFactory : IInspectable
+    {
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 8.0),
+        marshaling_behavior(agile),
+        activatable(Windows.UI.Xaml.Hosting.IDesktopWindowXamlSourceFactory, Windows.Foundation.UniversalApiContract, 8.0),
+        threading(both)
+    ]
+    runtimeclass DesktopWindowXamlSource
+    {
+        [default] interface Windows.UI.Xaml.Hosting.IDesktopWindowXamlSource;
+    }
+}
+
+namespace Windows.UI.Xaml.Markup {
+    [
+        contract(Windows.Foundation.UniversalApiContract, 1.0),
+        uuid(24374cf1-cceb-48bf-a514-41b0186f84c2)
+    ]
+    interface IXamlReader : IInspectable
+    {
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 1.0),
+        uuid(9891c6bd-534f-4955-b85a-8a8dc0dca602)
+    ]
+    interface IXamlReaderStatics : IInspectable
+    {
+        HRESULT Load([in] HSTRING xaml, [out, retval] IInspectable **value);
+        HRESULT LoadWithInitialTemplateValidation([in] HSTRING xaml, [out, retval] IInspectable **value);
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 1.0),
+        marshaling_behavior(agile),
+        static(IXamlReaderStatics, Windows.Foundation.UniversalApiContract, 1.0),
+        threading(both)
+    ]
+    runtimeclass XamlReader
+    {
+        [default] interface IXamlReader;
+    }
 }

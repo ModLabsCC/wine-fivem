@@ -307,6 +307,37 @@ void CDECL wined3d_resource_get_desc(const struct wined3d_resource *resource, st
     desc->size = resource->size;
 }
 
+void CDECL wined3d_resource_discard(struct wined3d_resource *resource)
+{
+    unsigned int i, sub_resource_count;
+    struct wined3d_texture *texture;
+
+    TRACE("resource %p.\n", resource);
+
+    if (!resource)
+        return;
+
+    wined3d_mutex_lock();
+    if (resource->type == WINED3D_RTYPE_BUFFER)
+    {
+        struct wined3d_buffer *buffer = buffer_from_resource(resource);
+
+        wined3d_buffer_validate_location(buffer, WINED3D_LOCATION_DISCARDED);
+        wined3d_buffer_invalidate_location(buffer, ~WINED3D_LOCATION_DISCARDED);
+    }
+    else
+    {
+        texture = texture_from_resource(resource);
+        sub_resource_count = wined3d_resource_get_sub_resource_count(resource);
+        for (i = 0; i < sub_resource_count; ++i)
+        {
+            wined3d_texture_validate_location(texture, i, WINED3D_LOCATION_DISCARDED);
+            wined3d_texture_invalidate_location(texture, i, ~WINED3D_LOCATION_DISCARDED);
+        }
+    }
+    wined3d_mutex_unlock();
+}
+
 HRESULT CDECL wined3d_resource_map(struct wined3d_resource *resource, unsigned int sub_resource_idx,
         struct wined3d_map_desc *map_desc, const struct wined3d_box *box, uint32_t flags)
 {

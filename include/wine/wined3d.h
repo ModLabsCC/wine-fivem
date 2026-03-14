@@ -2746,6 +2746,7 @@ ULONG __cdecl wined3d_rasterizer_state_incref(struct wined3d_rasterizer_state *s
 
 void __cdecl wined3d_resource_get_desc(const struct wined3d_resource *resource,
         struct wined3d_resource_desc *desc);
+void __cdecl wined3d_resource_discard(struct wined3d_resource *resource);
 void * __cdecl wined3d_resource_get_parent(const struct wined3d_resource *resource);
 unsigned int __cdecl wined3d_resource_get_priority(const struct wined3d_resource *resource);
 unsigned int __cdecl wined3d_resource_get_sub_resource_count(struct wined3d_resource *resource);
@@ -2768,6 +2769,7 @@ HRESULT __cdecl wined3d_rendertarget_view_create_from_sub_resource(struct wined3
 ULONG __cdecl wined3d_rendertarget_view_decref(struct wined3d_rendertarget_view *view);
 void * __cdecl wined3d_rendertarget_view_get_parent(const struct wined3d_rendertarget_view *view);
 struct wined3d_resource * __cdecl wined3d_rendertarget_view_get_resource(const struct wined3d_rendertarget_view *view);
+void __cdecl wined3d_rendertarget_view_discard(struct wined3d_rendertarget_view *view);
 void * __cdecl wined3d_rendertarget_view_get_sub_resource_parent(const struct wined3d_rendertarget_view *view);
 ULONG __cdecl wined3d_rendertarget_view_incref(struct wined3d_rendertarget_view *view);
 void __cdecl wined3d_rendertarget_view_set_parent(struct wined3d_rendertarget_view *view,
@@ -2805,6 +2807,7 @@ HRESULT __cdecl wined3d_shader_resource_view_create(const struct wined3d_view_de
         struct wined3d_shader_resource_view **view);
 ULONG __cdecl wined3d_shader_resource_view_decref(struct wined3d_shader_resource_view *view);
 void * __cdecl wined3d_shader_resource_view_get_parent(const struct wined3d_shader_resource_view *view);
+void __cdecl wined3d_shader_resource_view_discard(struct wined3d_shader_resource_view *view);
 ULONG __cdecl wined3d_shader_resource_view_incref(struct wined3d_shader_resource_view *view);
 
 HRESULT __cdecl wined3d_state_create(struct wined3d_device *device,
@@ -2977,6 +2980,7 @@ HRESULT __cdecl wined3d_unordered_access_view_create(const struct wined3d_view_d
         struct wined3d_unordered_access_view **view);
 ULONG __cdecl wined3d_unordered_access_view_decref(struct wined3d_unordered_access_view *view);
 void * __cdecl wined3d_unordered_access_view_get_parent(const struct wined3d_unordered_access_view *view);
+void __cdecl wined3d_unordered_access_view_discard(struct wined3d_unordered_access_view *view);
 ULONG __cdecl wined3d_unordered_access_view_incref(struct wined3d_unordered_access_view *view);
 
 HRESULT __cdecl wined3d_vertex_declaration_create(struct wined3d_device *device,

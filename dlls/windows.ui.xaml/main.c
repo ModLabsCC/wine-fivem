@@ -18,6 +18,7 @@
  */
 
 #include "initguid.h"
+#include <wchar.h>
 #include "private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(xaml);
@@ -32,6 +33,12 @@ HRESULT WINAPI DllGetActivationFactory( HSTRING classid, IActivationFactory **fa
 
     if (!wcscmp( buffer, RuntimeClass_Windows_UI_ColorHelper ))
         IActivationFactory_QueryInterface( color_helper_factory, &IID_IActivationFactory, (void **)factory );
+    else if (!wcscmp( buffer, L"Windows.UI.Xaml.Hosting.WindowsXamlManager" ))
+        IActivationFactory_QueryInterface( windows_xaml_manager_factory, &IID_IActivationFactory, (void **)factory );
+    else if (!wcscmp( buffer, L"Windows.UI.Xaml.Hosting.DesktopWindowXamlSource" ))
+        IActivationFactory_QueryInterface( desktop_window_xaml_source_factory, &IID_IActivationFactory, (void **)factory );
+    else if (!wcscmp( buffer, L"Windows.UI.Xaml.Markup.XamlReader" ))
+        IActivationFactory_QueryInterface( xaml_reader_factory, &IID_IActivationFactory, (void **)factory );
 
     if (*factory) return S_OK;
     return CLASS_E_CLASSNOTAVAILABLE;

@@ -36,8 +36,12 @@
 #include "windows.foundation.h"
 #define WIDL_using_Windows_UI
 #include "windows.ui.h"
+#include "windows.ui.xaml.hosting.desktopwindowxamlsource.h"
 
 extern IActivationFactory *color_helper_factory;
+extern IActivationFactory *windows_xaml_manager_factory;
+extern IActivationFactory *desktop_window_xaml_source_factory;
+extern IActivationFactory *xaml_reader_factory;
 
 #define DEFINE_IINSPECTABLE_( pfx, iface_type, impl_type, impl_from, iface_mem, expr )             \
     static inline impl_type *impl_from( iface_type *iface )                                        \

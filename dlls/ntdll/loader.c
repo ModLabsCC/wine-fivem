@@ -2058,6 +2058,92 @@ NTSTATUS WINAPI LdrUnlockLoaderLock( ULONG flags, ULONG_PTR magic )
     return STATUS_SUCCESS;
 }
 
+static BOOL query_env_flag( const WCHAR *name, SIZE_T name_len, BOOL *present )
+{
+    WCHAR value[8];
+    SIZE_T len;
+
+    if (!RtlQueryEnvironmentVariable( NULL, name, name_len, value, ARRAY_SIZE(value), &len ))
+    {
+        if (present) *present = TRUE;
+        return len && value[0] != '0';
+    }
+
+    if (present) *present = FALSE;
+    return FALSE;
+}
+
+static const WCHAR *get_process_basename(void)
+{
+    const WCHAR *image_name;
+    const WCHAR *basename;
+
+    image_name = NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer;
+    if (!image_name) return NULL;
+
+    basename = wcsrchr( image_name, '\\' );
+    return basename ? basename + 1 : image_name;
+}
+
+static BOOL is_wine_export_name( const ANSI_STRING *name )
+{
+    if (!name || !name->Buffer) return FALSE;
+    if (name->Length >= 5 && !strncmp( name->Buffer, "wine_", 5 )) return TRUE;
+    if (name->Length >= 7 && !strncmp( name->Buffer, "__wine_", 7 )) return TRUE;
+    return FALSE;
+}
+
+static BOOL should_hide_wine_export( WINE_MODREF *wm, const ANSI_STRING *name )
+{
+    static const char wine_get_version[] = "wine_get_version";
+    static const WCHAR hide_exports_env[] = L"WINE_HIDE_NTDLL_WINE_EXPORTS";
+    static const WCHAR env_name[] = L"WINE_HIDE_NTDLL_WINE_GET_VERSION";
+    static const WCHAR debug_env_name[] = L"WINE_HIDE_NTDLL_WINE_EXPORTS_DEBUG";
+    static const WCHAR ntdll_name[] = L"ntdll.dll";
+    const WCHAR *basename;
+    BOOL present, debug;
+    BOOL hide;
+
+    if (!is_wine_export_name( name )) return FALSE;
+    if (wcsicmp( wm->ldr.BaseDllName.Buffer, ntdll_name )) return FALSE;
+
+    hide = query_env_flag( hide_exports_env, ARRAY_SIZE(hide_exports_env) - 1, &present );
+    if (!present && name->Length == sizeof(wine_get_version) - 1 &&
+        !memcmp( name->Buffer, wine_get_version, sizeof(wine_get_version) - 1 ))
+    {
+        hide = query_env_flag( env_name, ARRAY_SIZE(env_name) - 1, &present );
+    }
+    if (!present)
+    {
+        basename = get_process_basename();
+        hide = basename && !wcsnicmp( basename, L"FiveM", 5 );
+    }
+
+    debug = query_env_flag( debug_env_name, ARRAY_SIZE(debug_env_name) - 1, NULL );
+    if (debug)
+    {
+        basename = get_process_basename();
+        TRACE( "ntdll export lookup %.*s for %s -> %s\n", (int)name->Length, name->Buffer,
+               debugstr_w( basename ), hide ? "hidden" : "visible" );
+    }
+    return hide;
+}
+
+static BOOL should_ignore_adhesive_init_failure( WINE_MODREF *wm )
+{
+    static const WCHAR env_name[] = L"WINE_FIVEM_ALLOW_ADHESIVE_INIT_FAILURE";
+    static const WCHAR adhesive_name[] = L"adhesive.dll";
+    const WCHAR *basename;
+    BOOL present;
+
+    if (!wm || !wm->ldr.BaseDllName.Buffer) return FALSE;
+    if (wcsicmp( wm->ldr.BaseDllName.Buffer, adhesive_name )) return FALSE;
+    if (!query_env_flag( env_name, ARRAY_SIZE(env_name) - 1, &present ) || !present) return FALSE;
+
+    basename = get_process_basename();
+    return basename && !wcsnicmp( basename, L"FiveM", 5 );
+}
+
 
 /******************************************************************
  *		LdrGetProcedureAddress  (NTDLL.@)
@@ -2074,6 +2160,7 @@ NTSTATUS WINAPI LdrGetProcedureAddress(HMODULE module, const ANSI_STRING *name,
 
     /* check if the module itself is invalid to return the proper error */
     if (!(wm = get_modref( module ))) ret = STATUS_DLL_NOT_FOUND;
+    else if (should_hide_wine_export( wm, name )) ret = STATUS_PROCEDURE_NOT_FOUND;
     else if ((exports = RtlImageDirectoryEntryToData( module, TRUE,
                                                       IMAGE_DIRECTORY_ENTRY_EXPORT, &exp_size )))
     {

@@ -3822,6 +3822,64 @@ static void test_RtlFindExportedRoutineByName(void)
     ok( proc == NULL, "Shouldn't find forwarded function\n" );
 }
 
+static void test_wine_exports_visibility(void)
+{
+    static const char * const export_names[] =
+    {
+        "wine_get_version",
+        "wine_get_build_id",
+        "wine_get_host_version",
+        "__wine_main",
+    };
+    FARPROC procs[ARRAY_SIZE(export_names)];
+    FARPROC proc;
+    BOOL found_any = FALSE;
+    unsigned int i;
+
+    for (i = 0; i < ARRAY_SIZE(export_names); ++i)
+    {
+        procs[i] = GetProcAddress( hntdll, export_names[i] );
+        if (procs[i]) found_any = TRUE;
+    }
+
+    if (!found_any)
+    {
+        win_skip( "wine exports are not present\n" );
+        return;
+    }
+
+    SetEnvironmentVariableA( "WINE_HIDE_NTDLL_WINE_EXPORTS", "1" );
+    for (i = 0; i < ARRAY_SIZE(export_names); ++i)
+    {
+        if (!procs[i]) continue;
+        proc = GetProcAddress( hntdll, export_names[i] );
+        ok( !proc, "expected %s to be hidden when env var is set, got %p\n", export_names[i], proc );
+    }
+
+    SetEnvironmentVariableA( "WINE_HIDE_NTDLL_WINE_EXPORTS", NULL );
+    for (i = 0; i < ARRAY_SIZE(export_names); ++i)
+    {
+        if (!procs[i]) continue;
+        proc = GetProcAddress( hntdll, export_names[i] );
+        ok( !!proc, "expected %s to be visible when env var is unset\n", export_names[i] );
+    }
+
+    proc = GetProcAddress( hntdll, "wine_get_version" );
+    if (!proc)
+    {
+        win_skip( "wine_get_version is not exported\n" );
+        return;
+    }
+
+    SetEnvironmentVariableA( "WINE_HIDE_NTDLL_WINE_GET_VERSION", "1" );
+    proc = GetProcAddress( hntdll, "wine_get_version" );
+    ok( !proc, "expected wine_get_version to be hidden when legacy env var is set, got %p\n", proc );
+
+    SetEnvironmentVariableA( "WINE_HIDE_NTDLL_WINE_GET_VERSION", NULL );
+    proc = GetProcAddress( hntdll, "wine_get_version" );
+    ok( !!proc, "expected wine_get_version to be visible when legacy env var is unset\n" );
+}
+
 static void test_RtlGetDeviceFamilyInfoEnum(void)
 {
     ULONGLONG version;
@@ -5587,6 +5645,7 @@ START_TEST(rtl)
     test_RtlInitializeSid();
     test_RtlValidSecurityDescriptor();
     test_RtlFindExportedRoutineByName();
+    test_wine_exports_visibility();
     test_RtlGetDeviceFamilyInfoEnum();
     test_RtlConvertDeviceFamilyInfoToString();
     test_rb_tree();

@@ -2106,6 +2106,7 @@ static BOOL should_hide_wine_export( WINE_MODREF *wm, const ANSI_STRING *name )
     static const char wine_get_version[] = "wine_get_version";
     static const WCHAR hide_exports_env[] = L"WINE_HIDE_NTDLL_WINE_EXPORTS";
     static const WCHAR env_name[] = L"WINE_HIDE_NTDLL_WINE_GET_VERSION";
+    static const WCHAR fivem_env_name[] = L"WINE_FIVEM_HIDE_WINE_EXPORTS";
     static const WCHAR debug_env_name[] = L"WINE_HIDE_NTDLL_WINE_EXPORTS_DEBUG";
     static const WCHAR ntdll_name[] = L"ntdll.dll";
     const WCHAR *basename;
@@ -2120,6 +2121,10 @@ static BOOL should_hide_wine_export( WINE_MODREF *wm, const ANSI_STRING *name )
         !memcmp( name->Buffer, wine_get_version, sizeof(wine_get_version) - 1 ))
     {
         hide = query_env_flag( env_name, ARRAY_SIZE(env_name) - 1, &present );
+    }
+    if (!present)
+    {
+        hide = query_env_flag( fivem_env_name, ARRAY_SIZE(fivem_env_name) - 1, &present );
     }
     if (!present)
     {

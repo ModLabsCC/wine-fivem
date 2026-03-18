@@ -2025,6 +2025,191 @@ static inline DWORD is_privileged_instr( CONTEXT *context )
     return 0;
 }
 
+static BOOL is_fivem_process(void)
+{
+    static const WCHAR fivem_name[] = {'F','i','v','e','M',0};
+    const WCHAR *image_name, *basename;
+    TEB *teb = NtCurrentTeb();
+
+    if (!teb || !teb->Peb || !teb->Peb->ProcessParameters) return FALSE;
+
+    image_name = teb->Peb->ProcessParameters->ImagePathName.Buffer;
+    if (!image_name) return FALSE;
+
+    basename = wcsrchr( image_name, '\\' );
+    if (!basename) basename = image_name;
+    else basename++;
+
+    return !wcsnicmp( basename, fivem_name, ARRAY_SIZE(fivem_name) - 1 );
+}
+
+static BOOL fivem_adhesive_ud2_hack_enabled(void)
+{
+    static int initialized;
+    static BOOL enabled;
+    const char *value;
+
+    if (!initialized)
+    {
+        initialized = 1;
+        value = getenv( "WINE_ENABLE_FIVEM_ADHESIVE_UD2_HACK" );
+        if (value) enabled = value[0] && strcmp( value, "0" );
+        else
+        {
+            value = getenv( "WINE_ENABLE_FIVEM_VMEM_HACKS" );
+            enabled = value && value[0] && strcmp( value, "0" );
+        }
+    }
+    return enabled && is_fivem_process();
+}
+
+static BOOL fivem_adhesive_signal_debug_enabled(void)
+{
+    static int initialized;
+    static BOOL enabled;
+    const char *value;
+
+    if (!initialized)
+    {
+        initialized = 1;
+        value = getenv( "WINE_FIVEM_ADHESIVE_SIGNAL_DEBUG" );
+        enabled = value && value[0] && strcmp( value, "0" );
+    }
+    return enabled && is_fivem_process();
+}
+
+static BOOL handle_fivem_adhesive_ud2_hack( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
+{
+    BYTE sig[8];
+    ULONG_PTR rip;
+    unsigned int ud2_len = 0;
+
+    rip = RIP_sig(sigcontext);
+    if (rec->ExceptionCode != EXCEPTION_ILLEGAL_INSTRUCTION) return FALSE;
+    if (!fivem_adhesive_ud2_hack_enabled()) return FALSE;
+
+    if (fivem_adhesive_signal_debug_enabled())
+        fprintf( stderr, "wine[fivem-adhesive]: first-chance ILLEGAL_INSTRUCTION rip=%p\n", (void *)rip );
+
+    if (virtual_uninterrupted_read_memory( (BYTE *)rip, sig, sizeof(sig) ) != sizeof(sig))
+    {
+        if (fivem_adhesive_signal_debug_enabled())
+            fprintf( stderr, "wine[fivem-adhesive]: ILLEGAL read failed at %p, applying blind +2 skip\n", (void *)rip );
+        RIP_sig(sigcontext) = rip + 2;
+        rec->ExceptionAddress = (void *)(rip + 2);
+        leave_handler( sigcontext );
+        return TRUE;
+    }
+
+    if (fivem_adhesive_signal_debug_enabled())
+        fprintf( stderr, "wine[fivem-adhesive]: ILLEGAL window @%p: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                 (void *)rip, sig[0], sig[1], sig[2], sig[3], sig[4], sig[5], sig[6], sig[7] );
+
+    while (ud2_len + 1 < sizeof(sig) && sig[ud2_len] == 0x0f && sig[ud2_len + 1] == 0x0b) ud2_len += 2;
+
+    if (ud2_len >= 2 && ud2_len + 2 < sizeof(sig) &&
+        sig[ud2_len] == 0x45 && sig[ud2_len + 1] == 0x31 && sig[ud2_len + 2] == 0xd2)
+    {
+        TRACE_(seh)( "FiveM adhesive UD2 hack: bypassing trap at %p via safe return path\n", (void *)rip );
+        RIP_sig(sigcontext) = rip + 0x6d;  /* jump to function cleanup path at +0x249c */
+        rec->ExceptionAddress = (void *)(rip + 0x6d);
+        leave_handler( sigcontext );
+        return TRUE;
+    }
+
+    if (ud2_len >= 2)
+    {
+        TRACE_(seh)( "FiveM adhesive UD2 hack: skipping %u-byte UD2 sequence at %p\n", ud2_len, (void *)rip );
+        RIP_sig(sigcontext) = rip + ud2_len;
+        rec->ExceptionAddress = (void *)(rip + ud2_len);
+        leave_handler( sigcontext );
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static BOOL handle_fivem_adhesive_null_deref_hack( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
+{
+    BYTE sig[14];
+    ULONG_PTR rip;
+
+    if (rec->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) return FALSE;
+    if (!fivem_adhesive_ud2_hack_enabled()) return FALSE;
+    if (rec->NumberParameters < 2 || rec->ExceptionInformation[1]) return FALSE;
+
+    rip = RIP_sig(sigcontext);
+    if (fivem_adhesive_signal_debug_enabled())
+        fprintf( stderr, "wine[fivem-adhesive]: first-chance AV rip=%p fault=%p\n",
+                 (void *)rip, (void *)rec->ExceptionInformation[1] );
+
+    if (virtual_uninterrupted_read_memory( (BYTE *)rip, sig, sizeof(sig) ) != sizeof(sig)) return FALSE;
+
+    if (sig[0] == 0x0f && sig[1] == 0x10 && sig[2] == 0x00 &&
+        sig[3] == 0x0f && sig[4] == 0x10 && sig[5] == 0x48 &&
+        sig[6] == 0x0b && sig[7] == 0x0f && sig[8] == 0x11 &&
+        sig[9] == 0x44 && sig[10] == 0x24 && sig[11] == 0x2c)
+    {
+        TRACE_(seh)( "FiveM adhesive NULL-deref hack: bypassing [rax] fault at %p via safe return path\n", (void *)rip );
+        RIP_sig(sigcontext) = rip + 0x46;
+        rec->ExceptionAddress = (void *)(rip + 0x46);
+        leave_handler( sigcontext );
+        return TRUE;
+    }
+
+    if (sig[0] == 0x0f && sig[1] == 0x10 && sig[2] == 0x02 &&
+        sig[3] == 0x0f && sig[4] == 0x10 && sig[5] == 0x4a &&
+        sig[6] == 0x0b && sig[7] == 0x0f && sig[8] == 0x11 &&
+        sig[9] == 0x44 && sig[10] == 0x24 && sig[11] == 0x47)
+    {
+        TRACE_(seh)( "FiveM adhesive NULL-deref hack: bypassing fault at %p via safe return path\n", (void *)rip );
+        RIP_sig(sigcontext) = rip + 0x35;  /* jump to function cleanup path at +0x249c */
+        rec->ExceptionAddress = (void *)(rip + 0x35);
+        leave_handler( sigcontext );
+        return TRUE;
+    }
+
+    if (sig[0] == 0x0f && sig[1] == 0x10 && sig[2] == 0x4a &&
+        sig[3] == 0x0b && sig[4] == 0x0f && sig[5] == 0x11 &&
+        sig[6] == 0x44 && sig[7] == 0x24 && sig[8] == 0x47 &&
+        sig[9] == 0x0f && sig[10] == 0x11 && sig[11] == 0x4c &&
+        sig[12] == 0x24 && sig[13] == 0x52)
+    {
+        TRACE_(seh)( "FiveM adhesive NULL-deref hack: bypassing [rdx+0xb] fault at %p via safe return path\n", (void *)rip );
+        RIP_sig(sigcontext) = rip + 0x32;
+        rec->ExceptionAddress = (void *)(rip + 0x32);
+        leave_handler( sigcontext );
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static BOOL handle_fivem_msvcp140_null_vtable_hack( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
+{
+    BYTE sig[10];
+    ULONG_PTR rip;
+
+    if (rec->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) return FALSE;
+    if (!fivem_adhesive_ud2_hack_enabled()) return FALSE;
+    if (rec->NumberParameters < 2 || rec->ExceptionInformation[1]) return FALSE;
+
+    rip = RIP_sig(sigcontext);
+    if (!rip) return FALSE;
+    if (virtual_uninterrupted_read_memory( (BYTE *)(rip - 3), sig, sizeof(sig) ) != sizeof(sig)) return FALSE;
+
+    if (sig[0] == 0x48 && sig[1] == 0x8b && sig[2] == 0x01 &&
+        sig[3] == 0x48 && sig[4] == 0x8b && sig[5] == 0x00 &&
+        sig[6] == 0xff && sig[7] == 0x15)
+    {
+        if (fivem_adhesive_signal_debug_enabled())
+            fprintf( stderr, "wine[fivem-adhesive]: applying msvcp140 null-vtable hack at rip=%p (jump to safe branch)\n", (void *)rip );
+        RIP_sig(sigcontext) = rip + 0xa6;  /* jump to +0x130ce branch path in msvcp140 */
+        rec->ExceptionAddress = (void *)(rip + 0xa6);
+        leave_handler( sigcontext );
+        return TRUE;
+    }
+    return FALSE;
+}
+
 
 /***********************************************************************
  *           handle_interrupt
@@ -2486,6 +2671,9 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         break;
     }
     if (handle_syscall_fault( ucontext, &rec, &context.c )) return;
+    if (handle_fivem_adhesive_ud2_hack( ucontext, &rec )) return;
+    if (handle_fivem_adhesive_null_deref_hack( ucontext, &rec )) return;
+    if (handle_fivem_msvcp140_null_vtable_hack( ucontext, &rec )) return;
     setup_raise_exception( ucontext, &rec, &context );
 }
 

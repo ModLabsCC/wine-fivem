@@ -191,6 +191,7 @@ static LDR_DDAG_NODE *node_ntdll, *node_kernel32;
 
 static NTSTATUS load_dll( const WCHAR *load_path, const WCHAR *libname, DWORD flags, WINE_MODREF** pwm, BOOL system );
 static NTSTATUS process_attach( LDR_DDAG_NODE *node, LPVOID lpReserved );
+static BOOL should_ignore_adhesive_init_failure( WINE_MODREF *wm );
 static FARPROC find_ordinal_export( HMODULE module, const IMAGE_EXPORT_DIRECTORY *exports,
                                     DWORD exp_size, DWORD ordinal, LPCWSTR load_path,
                                     WINE_MODREF *importer, BOOL is_dynamic );
@@ -1802,6 +1803,13 @@ static NTSTATUS process_attach( LDR_DDAG_NODE *node, LPVOID lpReserved )
         if (status == STATUS_SUCCESS)
         {
             wm->ldr.Flags |= LDR_PROCESS_ATTACHED;
+        }
+        else if (should_ignore_adhesive_init_failure( wm ))
+        {
+            WARN( "Initialization of %s failed (%lx), continuing due WINE_FIVEM_ALLOW_ADHESIVE_INIT_FAILURE\n",
+                  debugstr_w(wm->ldr.BaseDllName.Buffer), status );
+            wm->ldr.Flags |= LDR_PROCESS_ATTACHED;
+            status = STATUS_SUCCESS;
         }
         else
         {

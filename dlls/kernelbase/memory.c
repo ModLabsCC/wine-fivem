@@ -104,6 +104,21 @@ static const SIZE_T page_mask = 0xfff;
 #define ROUND_ADDR(addr) ((void *)((UINT_PTR)(addr) & ~page_mask))
 #define ROUND_SIZE(addr,size) (((SIZE_T)(size) + ((UINT_PTR)(addr) & page_mask) + page_mask) & ~page_mask)
 
+static SIZE_T maybe_pad_fivem_virtual_alloc_size( void *addr, SIZE_T size, DWORD type, DWORD protect )
+{
+    static const SIZE_T fivem_faulty_size = 0x410000;
+    static const SIZE_T fivem_padding = 0x1000;
+
+    if (addr) return size;
+    if (size != fivem_faulty_size) return size;
+    if (!(type & (MEM_RESERVE | MEM_COMMIT))) return size;
+    if (protect != PAGE_READWRITE) return size;
+
+    TRACE_(virtual)( "compat: padding VirtualAllocEx size %#Ix -> %#Ix (type %#lx, protect %#lx)\n",
+                     fivem_faulty_size, fivem_faulty_size + fivem_padding, type, protect );
+    return size + fivem_padding;
+}
+
 /***********************************************************************
  *             DiscardVirtualMemory   (kernelbase.@)
  */
@@ -430,8 +445,9 @@ LPVOID WINAPI DECLSPEC_HOTPATCH VirtualAllocEx( HANDLE process, void *addr, SIZE
                                                 DWORD type, DWORD protect )
 {
     LPVOID ret = addr;
+    SIZE_T request_size = maybe_pad_fivem_virtual_alloc_size( addr, size, type, protect );
 
-    if (!set_ntstatus( NtAllocateVirtualMemory( process, &ret, 0, &size, type, protect ))) return NULL;
+    if (!set_ntstatus( NtAllocateVirtualMemory( process, &ret, 0, &request_size, type, protect ))) return NULL;
     return ret;
 }
 

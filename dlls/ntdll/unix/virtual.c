@@ -109,6 +109,10 @@ struct reserved_area
 };
 
 static struct list reserved_areas = LIST_INIT(reserved_areas);
+static char *fivem_adhesive_guard_start;
+static char *fivem_adhesive_guard_end;
+static char *fivem_adhesive_keepalive_base;
+static SIZE_T fivem_adhesive_keepalive_size;
 
 struct builtin_module
 {
@@ -121,6 +125,39 @@ struct builtin_module
 };
 
 static struct list builtin_modules = LIST_INIT( builtin_modules );
+
+static BOOL is_fivem_process(void)
+{
+    static const WCHAR fivem_name[] = {'F','i','v','e','M',0};
+    const WCHAR *image_name, *basename;
+    TEB *teb = NtCurrentTeb();
+
+    if (!teb || !teb->Peb || !teb->Peb->ProcessParameters) return FALSE;
+
+    image_name = teb->Peb->ProcessParameters->ImagePathName.Buffer;
+    if (!image_name) return FALSE;
+
+    basename = wcsrchr( image_name, '\\' );
+    if (!basename) basename = image_name;
+    else basename++;
+
+    return !wcsnicmp( basename, fivem_name, ARRAY_SIZE(fivem_name) - 1 );
+}
+
+static BOOL fivem_vmem_hacks_enabled(void)
+{
+    static int initialized;
+    static BOOL enabled;
+    const char *value;
+
+    if (!initialized)
+    {
+        initialized = 1;
+        value = getenv( "WINE_ENABLE_FIVEM_VMEM_HACKS" );
+        enabled = value && value[0] && strcmp( value, "0" );
+    }
+    return enabled;
+}
 
 struct file_view
 {
@@ -4609,6 +4646,35 @@ NTSTATUS virtual_handle_fault( EXCEPTION_RECORD *rec, void *stack )
                 ret = STATUS_SUCCESS;
         }
     }
+    else if (err == EXCEPTION_READ_FAULT && is_fivem_process() && fivem_vmem_hacks_enabled())
+    {
+        struct file_view *view;
+        BYTE page_vprot = get_page_vprot( page );
+        BYTE access_mask = VPROT_READ | VPROT_WRITE | VPROT_EXEC | VPROT_WRITECOPY | VPROT_WRITEWATCH;
+        BYTE commit_vprot;
+
+        if ((view = find_view( page, host_page_size )) && is_view_valloc( view ) && !(page_vprot & VPROT_COMMITTED))
+        {
+            TRACE( "FiveM compat: committing reserved page at %p for fault addr %p\n", page, addr );
+            commit_vprot = (page_vprot & access_mask) | (view->protect & access_mask) | VPROT_COMMITTED;
+            if (set_vprot( view, page, host_page_size, commit_vprot )) ret = STATUS_SUCCESS;
+        }
+    }
+    else if (fivem_vmem_hacks_enabled() && fivem_adhesive_guard_start &&
+             page >= fivem_adhesive_guard_start && page < fivem_adhesive_guard_end)
+    {
+        struct file_view *view;
+        BYTE page_vprot = get_page_vprot( page );
+        BYTE access_mask = VPROT_READ | VPROT_WRITE | VPROT_EXEC | VPROT_WRITECOPY | VPROT_WRITEWATCH;
+        BYTE commit_vprot;
+
+        TRACE( "FiveM compat: committing adhesive guard page at %p for fault addr %p\n", page, addr );
+        if ((view = find_view( page, host_page_size )) && is_view_valloc( view ))
+        {
+            commit_vprot = (page_vprot & access_mask) | (view->protect & access_mask) | VPROT_COMMITTED;
+            if (set_vprot( view, page, host_page_size, commit_vprot )) ret = STATUS_SUCCESS;
+        }
+    }
     mutex_unlock( &virtual_mutex );
     rec->ExceptionCode = ret;
     return ret;
@@ -5198,7 +5264,21 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
                                          SIZE_T *size_ptr, ULONG type, ULONG protect )
 {
     static const ULONG type_mask = MEM_COMMIT | MEM_RESERVE | MEM_TOP_DOWN | MEM_WRITE_WATCH | MEM_RESET;
+    static const SIZE_T fivem_faulty_size = 0x410000;
+    static const SIZE_T fivem_guard_size = 0x2000000;
+    static const SIZE_T fivem_guard_hidden_tail = 0x1000;
+    static const SIZE_T fivem_adhesive_reserve_size = 0x00fd0000;
+    static const SIZE_T fivem_adhesive_reserve_pad = 0x00100000;
+    static const SIZE_T fivem_adhesive_pool_min = 0x460000;
+    static const SIZE_T fivem_adhesive_pool_max = 0x470000;
     ULONG_PTR limit;
+    void *request_addr;
+    SIZE_T alloc_size, requested_size;
+    SIZE_T fivem_visible_size = 0;
+    BOOL pad_fivem_alloc = FALSE;
+    BOOL hide_fivem_tail = FALSE;
+    BOOL pad_fivem_adhesive_reserve = FALSE;
+    NTSTATUS status;
 
     TRACE("%p %p %08lx %x %08x\n", process, *ret, *size_ptr, type, protect );
 
@@ -5210,6 +5290,34 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
 #endif
     if (type & ~type_mask) return STATUS_INVALID_PARAMETER;
 
+    request_addr = *ret;
+    requested_size = *size_ptr;
+    alloc_size = requested_size;
+
+    if (process == NtCurrentProcess() && requested_size == fivem_faulty_size && is_fivem_process() &&
+        fivem_vmem_hacks_enabled() &&
+        protect == PAGE_READWRITE && (((type == MEM_RESERVE || type == (MEM_RESERVE | MEM_COMMIT)) && !*ret) ||
+        type == MEM_COMMIT))
+    {
+        if (type == MEM_RESERVE || type == (MEM_RESERVE | MEM_COMMIT))
+        {
+            alloc_size += fivem_guard_size + fivem_guard_hidden_tail;
+            hide_fivem_tail = TRUE;
+            fivem_visible_size = requested_size;
+        }
+        pad_fivem_alloc = TRUE;
+        TRACE( "FiveM compat: padding NtAllocateVirtualMemory size %#zx -> %#zx (type %#x, protect %#x)\n",
+               requested_size, alloc_size, type, protect );
+    }
+    else if (process == NtCurrentProcess() && requested_size == fivem_adhesive_reserve_size && is_fivem_process() &&
+             fivem_vmem_hacks_enabled() &&
+             !*ret && type == MEM_RESERVE && protect == PAGE_READWRITE)
+    {
+        alloc_size += fivem_adhesive_reserve_pad;
+        pad_fivem_adhesive_reserve = TRUE;
+        TRACE( "FiveM compat: padding adhesive reserve size %#zx -> %#zx\n", requested_size, alloc_size );
+    }
+
     if (process != NtCurrentProcess())
     {
         union apc_call call;
@@ -5220,7 +5328,7 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
 
         call.virtual_alloc.type         = APC_VIRTUAL_ALLOC;
         call.virtual_alloc.addr         = wine_server_client_ptr( *ret );
-        call.virtual_alloc.size         = *size_ptr;
+        call.virtual_alloc.size         = alloc_size;
         call.virtual_alloc.zero_bits    = zero_bits;
         call.virtual_alloc.op_type      = type;
         call.virtual_alloc.prot         = protect;
@@ -5230,7 +5338,14 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
         if (result.virtual_alloc.status == STATUS_SUCCESS)
         {
             *ret      = wine_server_get_ptr( result.virtual_alloc.addr );
-            *size_ptr = result.virtual_alloc.size;
+            if (pad_fivem_adhesive_reserve) *size_ptr = requested_size;
+            else if (pad_fivem_alloc && hide_fivem_tail) *size_ptr = fivem_visible_size;
+            else *size_ptr = result.virtual_alloc.size;
+            if (pad_fivem_alloc)
+            {
+                fivem_adhesive_guard_start = (char *)*ret + requested_size;
+                fivem_adhesive_guard_end = fivem_adhesive_guard_start + fivem_guard_size;
+            }
         }
         else
         {
@@ -5245,7 +5360,29 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
     else
         limit = 0;
 
-    return allocate_virtual_memory( ret, size_ptr, type, protect, 0, limit, 0, 0 );
+    status = allocate_virtual_memory( ret, &alloc_size, type, protect, 0, limit, 0, 0 );
+    if (status == STATUS_SUCCESS)
+    {
+        if (pad_fivem_adhesive_reserve) *size_ptr = requested_size;
+        else if (pad_fivem_alloc && hide_fivem_tail) *size_ptr = fivem_visible_size;
+        else *size_ptr = alloc_size;
+        if (pad_fivem_alloc)
+        {
+            fivem_adhesive_guard_start = (char *)*ret + requested_size;
+            fivem_adhesive_guard_end = fivem_adhesive_guard_start + fivem_guard_size;
+        }
+        if (process == NtCurrentProcess() && is_fivem_process() && fivem_vmem_hacks_enabled() &&
+            !request_addr && type == (MEM_RESERVE | MEM_COMMIT) &&
+            protect == PAGE_READWRITE && requested_size >= fivem_adhesive_pool_min &&
+            requested_size <= fivem_adhesive_pool_max)
+        {
+            fivem_adhesive_keepalive_base = *ret;
+            fivem_adhesive_keepalive_size = alloc_size;
+            TRACE( "FiveM compat: tracking adhesive pool %p size %#zx for keepalive\n",
+                   fivem_adhesive_keepalive_base, fivem_adhesive_keepalive_size );
+        }
+    }
+    return status;
 }
 
 
@@ -5454,6 +5591,13 @@ NTSTATUS WINAPI NtFreeVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_T *si
         break;
     case MEM_RELEASE:
         if (!size) size = view->size;
+        if (is_fivem_process() && fivem_vmem_hacks_enabled() && fivem_adhesive_keepalive_base &&
+            base == fivem_adhesive_keepalive_base && size >= fivem_adhesive_keepalive_size)
+        {
+            TRACE( "FiveM compat: skipping MEM_RELEASE for adhesive pool %p size %#zx\n", base, size );
+            status = STATUS_SUCCESS;
+            break;
+        }
         status = free_pages( view, base, size );
         break;
     case MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER:

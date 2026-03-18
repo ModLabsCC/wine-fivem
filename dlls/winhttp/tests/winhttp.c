@@ -2290,7 +2290,7 @@ static const char largeauth[] =
 "Server: winetest\r\n"
 "WWW-Authenticate: Basic realm=\"placebo\"\r\n"
 "WWW-Authenticate: NTLM\r\n"
-"Content-Length: 10240\r\n"
+"Content-Length: 100\r\n"
 "Content-Type: text/plain\r\n"
 "\r\n";
 
@@ -2305,6 +2305,7 @@ static const char switchprotocols[] =
 "HTTP/1.1 101 Switching Protocols\r\n"
 "Server: winetest\r\n"
 "Upgrade: websocket\r\n"
+"Content-Length: 4\r\n"
 "Connection: Upgrade\r\n";
 
 static const char temp_redirectmsg[] =
@@ -2370,7 +2371,7 @@ static void create_websocket_accept(const char *key, char *buf, unsigned int buf
 
     buf[0] = 0;
     len = buflen;
-    CryptBinaryToStringA( (BYTE *)sha1, sizeof(sha1), CRYPT_STRING_BASE64, buf, &len);
+    CryptBinaryToStringA((BYTE *)sha1, sizeof(sha1), CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, buf, &len);
 }
 
 static int server_receive_request(int c, char *buffer, size_t buffer_size)
@@ -2491,7 +2492,7 @@ static DWORD CALLBACK server_thread(LPVOID param)
             else
             {
                 send(c, largeauth, sizeof largeauth - 1, 0);
-                for (i = 0; i < 10240; i++) send(c, "A", 1, 0);
+                for (i = 0; i < 100; i++) send(c, "A", 1, 0);
                 continue;
             }
         }
@@ -2570,6 +2571,7 @@ static DWORD CALLBACK server_thread(LPVOID param)
                 strcat(headers, "\r\n\r\n");
 
                 send(c, headers, strlen(headers), 0);
+                send(c, "data", 4, 0);
                 continue;
             }
             else send(c, notokmsg, sizeof(notokmsg) - 1, 0);
@@ -3239,13 +3241,10 @@ static void test_no_content(int port)
     size = 12345;
     SetLastError(0xdeadbeef);
     ret = WinHttpQueryDataAvailable(req, &size);
-    todo_wine {
     ok(!ret, "expected error\n");
     ok(GetLastError() == ERROR_WINHTTP_INCORRECT_HANDLE_STATE,
        "expected ERROR_WINHTTP_INCORRECT_HANDLE_STATE, got %lu\n", GetLastError());
-    ok(size == 12345 || broken(size == 0) /* Win <= 2003 */,
-       "expected 12345, got %lu\n", size);
-    }
+    ok(size == 12345, "expected 12345, got %lu\n", size);
 
     ret = WinHttpSendRequest(req, NULL, 0, NULL, 0, 0, 0);
     ok(ret, "expected success\n");
@@ -3561,7 +3560,8 @@ static void test_websocket(int port)
     size = sizeof(len);
     ret = WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER, NULL, &len,
                               &size, NULL);
-    ok(!ret, "success\n");
+    ok(ret, "failure\n");
+    ok(len == 4, "got %lu\n", len);
 
     index = 0;
     size = sizeof(buf);
@@ -6316,6 +6316,58 @@ static void test_connection_cache(int port)
     WinHttpCloseHandle(ses);
 }
 
+static void test_decompression(void)
+{
+    HINTERNET ses, req, con;
+    DWORD decompression, len, status, size;
+    BOOL ret;
+
+    ses = WinHttpOpen( L"winetest", WINHTTP_ACCESS_TYPE_NO_PROXY, NULL, NULL, 0 );
+    ok( ses != NULL, "got %lu\n", GetLastError() );
+
+    decompression = WINHTTP_DECOMPRESSION_FLAG_ALL;
+    ret = WinHttpSetOption( ses, WINHTTP_OPTION_DECOMPRESSION, &decompression, sizeof(decompression) );
+    ok( ret, "got %lu\n", GetLastError() );
+
+    con = WinHttpConnect( ses, L"test.winehq.org", 0, 0 );
+    ok( con != NULL, "got %lu\n", GetLastError() );
+
+    req = WinHttpOpenRequest( con, NULL, L"tests/gzip.php", NULL, NULL, NULL, 0 );
+    ok( req != NULL, "got %lu\n", GetLastError() );
+
+    ret = WinHttpSendRequest( req, NULL, 0, NULL, 0, 0, 0 );
+    ok( ret, "got %lu\n", GetLastError() );
+
+    ret = WinHttpReceiveResponse( req, NULL );
+    ok( ret, "got %lu\n", GetLastError() );
+
+    status = 0xdeadbeef;
+    size = sizeof(status);
+    ret = WinHttpQueryHeaders( req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, NULL, &status, &size, NULL );
+    ok( ret, "got %lu\n", GetLastError() );
+    ok( status == HTTP_STATUS_OK, "got %lu\n", status );
+
+    len = 0xdeadbeef;
+    size = sizeof(len);
+    ret = WinHttpQueryHeaders( req, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER, NULL, &len, &size, 0 );
+    ok( !ret && GetLastError() == ERROR_WINHTTP_HEADER_NOT_FOUND, "got %lu\n", GetLastError() );
+    ok( len == 0xdeadbeef, "got %lu\n", len );
+
+    for (;;)
+    {
+        char buf[4096];
+
+        size = 0;
+        ret = WinHttpReadData( req, buf, sizeof(buf), &size );
+        ok( ret, "got %lu\n", GetLastError() );
+        if (!ret || !size) break;
+    }
+
+    WinHttpCloseHandle( req );
+    WinHttpCloseHandle( con );
+    WinHttpCloseHandle( ses );
+}
+
 START_TEST (winhttp)
 {
     struct server_info si;
@@ -6350,6 +6402,7 @@ START_TEST (winhttp)
     test_WinHttpGetIEProxyConfigForCurrentUser();
     test_chunked_read();
     test_max_http_automatic_redirects();
+    test_decompression();
 
     si.event = CreateEventW(NULL, 0, 0, NULL);
     si.port = 7532;

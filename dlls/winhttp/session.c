@@ -262,7 +262,6 @@ static BOOL session_set_option( struct object_header *hdr, DWORD option, void *b
         session->websocket_receive_buffer_size = buffer_size;
         return TRUE;
     }
-
     case WINHTTP_OPTION_WEB_SOCKET_SEND_BUFFER_SIZE:
     {
         DWORD buffer_size;
@@ -278,7 +277,25 @@ static BOOL session_set_option( struct object_header *hdr, DWORD option, void *b
         session->websocket_send_buffer_size = buffer_size;
         return TRUE;
     }
+    case WINHTTP_OPTION_DECOMPRESSION:
+    {
+        DWORD decompression;
 
+        if (buflen != sizeof(decompression))
+        {
+            SetLastError( ERROR_INSUFFICIENT_BUFFER );
+            return FALSE;
+        }
+        decompression = *(DWORD *)buffer;
+        if (decompression & ~WINHTTP_DECOMPRESSION_FLAG_ALL)
+        {
+            FIXME( "unknown compression types %lx\n", decompression );
+            return FALSE;
+        }
+        TRACE( "%#lx\n", decompression );
+        session->hdr.decompression = decompression;
+        return TRUE;
+    }
     default:
         FIXME( "unimplemented option %lu\n", option );
         SetLastError( ERROR_WINHTTP_INVALID_OPTION );
@@ -620,6 +637,7 @@ HINTERNET WINAPI WinHttpConnect( HINTERNET hsession, const WCHAR *server, INTERN
     connect->hdr.notify_mask = session->hdr.notify_mask;
     connect->hdr.context = session->hdr.context;
     connect->hdr.redirect_policy = session->hdr.redirect_policy;
+    connect->hdr.decompression = session->hdr.decompression;
 
     addref_object( &session->hdr );
     connect->session = session;
@@ -678,6 +696,7 @@ static void request_destroy( struct object_header *hdr )
         }
     }
 
+    destroy_data_stream( request->data_stream );
     free( request );
 }
 
@@ -1205,7 +1224,6 @@ static BOOL request_set_option( struct object_header *hdr, DWORD option, void *b
         request->websocket_receive_buffer_size = buffer_size;
         return TRUE;
     }
-
     case WINHTTP_OPTION_WEB_SOCKET_SEND_BUFFER_SIZE:
     {
         DWORD buffer_size;
@@ -1221,7 +1239,25 @@ static BOOL request_set_option( struct object_header *hdr, DWORD option, void *b
         TRACE( "Websocket send buffer size %lu.\n", buffer_size);
         return TRUE;
     }
+    case WINHTTP_OPTION_DECOMPRESSION:
+    {
+        DWORD decompression;
 
+        if (buflen != sizeof(decompression))
+        {
+            SetLastError( ERROR_INSUFFICIENT_BUFFER );
+            return FALSE;
+        }
+        decompression = *(DWORD *)buffer;
+        if (decompression & ~WINHTTP_DECOMPRESSION_FLAG_ALL)
+        {
+            FIXME( "unknown compression types %lx\n", decompression );
+            return FALSE;
+        }
+        TRACE( "%#lx\n", decompression );
+        request->hdr.decompression = decompression;
+        return TRUE;
+    }
     default:
         FIXME( "unimplemented option %lu\n", option );
         SetLastError( ERROR_WINHTTP_INVALID_OPTION );
@@ -1307,6 +1343,7 @@ HINTERNET WINAPI WinHttpOpenRequest( HINTERNET hconnect, const WCHAR *verb, cons
     request->hdr.notify_mask = connect->hdr.notify_mask;
     request->hdr.context = connect->hdr.context;
     request->hdr.redirect_policy = connect->hdr.redirect_policy;
+    request->hdr.decompression = connect->hdr.decompression;
     init_queue( &request->queue );
 
     addref_object( &connect->hdr );
@@ -1322,6 +1359,8 @@ HINTERNET WINAPI WinHttpOpenRequest( HINTERNET hconnect, const WCHAR *verb, cons
     request->websocket_send_buffer_size = connect->session->websocket_send_buffer_size;
     request->websocket_set_send_buffer_size = request->websocket_send_buffer_size;
     request->read_reply_status = ERROR_WINHTTP_INCORRECT_HANDLE_STATE;
+    request->netconn_stream.data_stream.vtbl = &netconn_stream_vtbl;
+    request->data_stream = &request->netconn_stream.data_stream;
 
     if (!verb || !verb[0]) verb = L"GET";
     if (!(request->verb = wcsdup( verb ))) goto end;
@@ -1452,11 +1491,6 @@ static BOOL set_option( struct object_header *hdr, DWORD option, void *buffer, D
         hdr->context = *(DWORD_PTR *)buffer;
         return TRUE;
     }
-
-    case WINHTTP_OPTION_DECOMPRESSION:
-        FIXME( "WINHTTP_OPTION_DECOMPRESSION, %#lx stub.\n", *(DWORD *)buffer );
-        return TRUE;
-
     default:
         if (hdr->vtbl->set_option) ret = hdr->vtbl->set_option( hdr, option, buffer, buflen );
         else

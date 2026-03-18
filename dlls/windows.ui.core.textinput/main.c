@@ -160,13 +160,15 @@ static HRESULT WINAPI core_input_view_GetCoreInputViewOcclusions(ICoreInputView 
 static HRESULT WINAPI core_input_view_TryShowPrimaryView(ICoreInputView *iface, boolean *result)
 {
     FIXME("iface %p, boolean %p stub!\n", iface, result);
-    return E_NOTIMPL;
+    *result = TRUE;
+    return S_OK;
 }
 
 static HRESULT WINAPI core_input_view_TryHidePrimaryView(ICoreInputView *iface, boolean *result)
 {
     FIXME("iface %p, boolean %p stub!\n", iface, result);
-    return E_NOTIMPL;
+    *result = TRUE;
+    return S_OK;
 }
 
 static const struct ICoreInputViewVtbl core_input_view_vtbl =
@@ -304,7 +306,8 @@ static HRESULT WINAPI core_input_view4_add_PrimaryViewHiding(ICoreInputView4 *if
                                                              EventRegistrationToken *token)
 {
     FIXME("iface %p, handler %p, token %p stub!\n", iface, handler, token);
-    return E_NOTIMPL;
+    token->value = 0xdeadbeef;
+    return S_OK;
 }
 
 static HRESULT WINAPI core_input_view4_remove_PrimaryViewHiding(ICoreInputView4 *iface,

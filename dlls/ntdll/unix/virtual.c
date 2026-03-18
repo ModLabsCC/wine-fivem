@@ -154,7 +154,12 @@ static BOOL fivem_vmem_hacks_enabled(void)
     {
         initialized = 1;
         value = getenv( "WINE_ENABLE_FIVEM_VMEM_HACKS" );
-        enabled = value && value[0] && strcmp( value, "0" );
+        if (value) enabled = value[0] && strcmp( value, "0" );
+        else enabled = is_fivem_process();
+        TRACE( "FiveM VMEM hacks %s (env=%s process=%s)\n",
+               enabled ? "enabled" : "disabled",
+               value ? value : "<unset>",
+               is_fivem_process() ? "fivem" : "other" );
     }
     return enabled;
 }

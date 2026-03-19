@@ -30,6 +30,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <string.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <sys/types.h>
@@ -2078,11 +2079,55 @@ static BOOL fivem_adhesive_signal_debug_enabled(void)
     return enabled && is_fivem_process();
 }
 
+static const BYTE fivem_adhesive_zerobuf[512];
+static BYTE fivem_adhesive_synth_state[512];
+
+static inline ULONG_PTR get_fivem_adhesive_synth_state(void)
+{
+    ULONG len = 0x10;
+    ULONGLONG self_ptr = (ULONG_PTR)fivem_adhesive_synth_state;
+
+    memset( fivem_adhesive_synth_state, 0, sizeof(fivem_adhesive_synth_state) );
+    fivem_adhesive_synth_state[0x0c] = 0x03;
+    fivem_adhesive_synth_state[0x27] = 0x01;
+    fivem_adhesive_synth_state[0x42] = 0x03;
+    memcpy( fivem_adhesive_synth_state + 0x29, &len, sizeof(len) );
+    memcpy( fivem_adhesive_synth_state + 0x02, &self_ptr, sizeof(self_ptr) );
+    return (ULONG_PTR)fivem_adhesive_synth_state;
+}
+
 static BOOL handle_fivem_adhesive_ud2_hack( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
 {
     BYTE sig[8];
+    BYTE fallback[4];
+    BYTE marker[5];
+    BYTE state[3], patched[3];
+    BYTE flag_state, flag_patched;
+    ULONG len_state, len_patched;
+    ULONGLONG qword_state, qword_patched;
+    BOOL extras_ok;
+    BOOL core_ok;
     ULONG_PTR rip;
+    ULONG_PTR data_ptr;
+    ULONG_PTR target;
+    ULONG_PTR fallback_ptr;
+    ULONG_PTR candidates[128];
+    ULONG_PTR candidate;
+    ULONG_PTR stack_ptr;
+    ULONG_PTR stack_min;
+    ULONG_PTR stack_max;
+    ULONG_PTR reg_candidates[] =
+    {
+        RDX_sig(sigcontext), RSI_sig(sigcontext), RDI_sig(sigcontext),
+        RAX_sig(sigcontext), RBX_sig(sigcontext), RCX_sig(sigcontext),
+        R8_sig(sigcontext),  R9_sig(sigcontext),  R10_sig(sigcontext), R11_sig(sigcontext),
+        R12_sig(sigcontext), R13_sig(sigcontext), R14_sig(sigcontext), R15_sig(sigcontext),
+        RBP_sig(sigcontext),
+    };
+    unsigned int i, j;
+    unsigned int candidate_count = 0;
     unsigned int ud2_len = 0;
+    BOOL attempted_repair = FALSE;
 
     rip = RIP_sig(sigcontext);
     if (rec->ExceptionCode != EXCEPTION_ILLEGAL_INSTRUCTION) return FALSE;

@@ -2162,9 +2162,12 @@ static BOOL handle_fivem_adhesive_null_deref_hack( ucontext_t *sigcontext, EXCEP
     BYTE sig[16];
     BYTE probe;
     ULONG_PTR replacement = 0;
+    ULONG_PTR base;
+    ULONG_PTR index;
     ULONG_PTR rip;
     ULONG_PTR fault;
     BYTE modrm, mod, rm;
+    BOOL valid;
     signed char disp8 = 0;
 
     if (rec->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) return FALSE;
@@ -2188,6 +2191,116 @@ static BOOL handle_fivem_adhesive_null_deref_hack( ucontext_t *sigcontext, EXCEP
         fprintf( stderr, "wine[fivem-adhesive]: AV window @%p: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
                  (void *)rip, sig[0], sig[1], sig[2], sig[3], sig[4], sig[5], sig[6], sig[7],
                  sig[8], sig[9], sig[10], sig[11], sig[12], sig[13], sig[14], sig[15] );
+
+    if (rec->ExceptionInformation[0] == EXCEPTION_WRITE_FAULT)
+    {
+        if ((sig[0] == 0x4c || sig[0] == 0x48) && sig[1] == 0x89 && sig[2] == 0x08)  /* mov qword ptr [rax], r9/rcx */
+        {
+            base = RAX_sig(sigcontext);
+            valid = base && virtual_check_buffer_for_write( (void *)base, sizeof(ULONG_PTR) );
+            if (!valid)
+            {
+                replacement = base;
+                if (!replacement || !virtual_check_buffer_for_write( (void *)replacement, sizeof(ULONG_PTR) ))
+                    replacement = (ULONG_PTR)(fivem_adhesive_writebuf + 32);
+                if (fivem_adhesive_signal_debug_enabled())
+                    fprintf( stderr, "wine[fivem-adhesive]: substituting invalid qword [rax] store at %p with %p\n",
+                             (void *)rip, (void *)replacement );
+                RAX_sig(sigcontext) = replacement;
+                rec->ExceptionAddress = (void *)rip;
+                leave_handler( sigcontext );
+                return TRUE;
+            }
+        }
+
+        if (sig[0] == 0xc6 && sig[1] == 0x04 && sig[2] == 0x02)  /* mov byte ptr [rdx+rax], imm8 */
+        {
+            base = RDX_sig(sigcontext);
+            index = RAX_sig(sigcontext);
+            valid = base && index <= ~(ULONG_PTR)0 - base &&
+                    virtual_check_buffer_for_write( (void *)(base + index), 1 );
+            if (!valid)
+            {
+                replacement = base;
+                if (!replacement || !virtual_check_buffer_for_write( (void *)replacement, 1 ))
+                    replacement = get_fivem_adhesive_synth_state();
+                if (fivem_adhesive_signal_debug_enabled())
+                    fprintf( stderr, "wine[fivem-adhesive]: substituting invalid [rdx+rax] store at %p with base=%p index=0\n",
+                             (void *)rip, (void *)replacement );
+                RDX_sig(sigcontext) = replacement;
+                RAX_sig(sigcontext) = 0;
+                rec->ExceptionAddress = (void *)rip;
+                leave_handler( sigcontext );
+                return TRUE;
+            }
+        }
+
+        if (sig[0] == 0x45 && sig[1] == 0x88 && sig[2] == 0x14 && sig[3] == 0x00)  /* mov byte ptr [r8+rax], r10b */
+        {
+            base = R8_sig(sigcontext);
+            index = RAX_sig(sigcontext);
+            valid = base && index <= ~(ULONG_PTR)0 - base &&
+                    virtual_check_buffer_for_write( (void *)(base + index), 1 );
+            if (!valid)
+            {
+                replacement = base;
+                if (!replacement || !virtual_check_buffer_for_write( (void *)replacement, 1 ))
+                    replacement = get_fivem_adhesive_synth_state();
+                if (fivem_adhesive_signal_debug_enabled())
+                    fprintf( stderr, "wine[fivem-adhesive]: substituting invalid [r8+rax] store at %p with base=%p index=0\n",
+                             (void *)rip, (void *)replacement );
+                R8_sig(sigcontext) = replacement;
+                RAX_sig(sigcontext) = 0;
+                rec->ExceptionAddress = (void *)rip;
+                leave_handler( sigcontext );
+                return TRUE;
+            }
+        }
+
+        if (sig[0] == 0x43 && sig[1] == 0xc6 && sig[2] == 0x04 && sig[3] == 0x02)  /* mov byte ptr [r10+r8], imm8 */
+        {
+            base = R10_sig(sigcontext);
+            index = R8_sig(sigcontext);
+            valid = base && index <= ~(ULONG_PTR)0 - base &&
+                    virtual_check_buffer_for_write( (void *)(base + index), 1 );
+            if (!valid)
+            {
+                replacement = base;
+                if (!replacement || !virtual_check_buffer_for_write( (void *)replacement, 1 ))
+                    replacement = get_fivem_adhesive_synth_state();
+                if (fivem_adhesive_signal_debug_enabled())
+                    fprintf( stderr, "wine[fivem-adhesive]: substituting invalid [r10+r8] store at %p with base=%p index=0\n",
+                             (void *)rip, (void *)replacement );
+                R10_sig(sigcontext) = replacement;
+                R8_sig(sigcontext) = 0;
+                rec->ExceptionAddress = (void *)rip;
+                leave_handler( sigcontext );
+                return TRUE;
+            }
+        }
+
+        if (sig[0] == 0x44 && sig[1] == 0x88 && sig[2] == 0x04 && sig[3] == 0x06)  /* mov byte ptr [rsi+rax], r8b */
+        {
+            base = RSI_sig(sigcontext);
+            index = RAX_sig(sigcontext);
+            valid = base && index <= ~(ULONG_PTR)0 - base &&
+                    virtual_check_buffer_for_write( (void *)(base + index), 1 );
+            if (!valid)
+            {
+                replacement = base;
+                if (!replacement || !virtual_check_buffer_for_write( (void *)replacement, 1 ))
+                    replacement = get_fivem_adhesive_synth_state();
+                if (fivem_adhesive_signal_debug_enabled())
+                    fprintf( stderr, "wine[fivem-adhesive]: substituting invalid [rsi+rax] store at %p with base=%p index=0\n",
+                             (void *)rip, (void *)replacement );
+                RSI_sig(sigcontext) = replacement;
+                RAX_sig(sigcontext) = 0;
+                rec->ExceptionAddress = (void *)rip;
+                leave_handler( sigcontext );
+                return TRUE;
+            }
+        }
+    }
 
     if (sig[0] == 0x0f && sig[1] == 0x10)  /* movups xmm, m128 */
     {

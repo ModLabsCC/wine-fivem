@@ -2766,13 +2766,13 @@ static BOOL handle_fivem_msvcp140_null_vtable_hack( ucontext_t *sigcontext, EXCE
 
     if (rec->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) return FALSE;
     if (!fivem_adhesive_ud2_hack_enabled()) return FALSE;
-    if (rec->NumberParameters < 2 || rec->ExceptionInformation[1]) return FALSE;
+    if (rec->NumberParameters < 2) return FALSE;
 
     rip = RIP_sig(sigcontext);
     if (!rip) return FALSE;
-    if (virtual_uninterrupted_read_memory( (BYTE *)(rip - 3), sig, sizeof(sig) ) != sizeof(sig)) return FALSE;
-
-    if (sig[0] == 0x48 && sig[1] == 0x8b && sig[2] == 0x01 &&
+    if (!rec->ExceptionInformation[1] &&
+        virtual_uninterrupted_read_memory( (BYTE *)(rip - 3), sig, sizeof(sig) ) == sizeof(sig) &&
+        sig[0] == 0x48 && sig[1] == 0x8b && sig[2] == 0x01 &&
         sig[3] == 0x48 && sig[4] == 0x8b && sig[5] == 0x00 &&
         sig[6] == 0xff && sig[7] == 0x15 &&
         sig[12] == 0xe9)
@@ -2781,6 +2781,22 @@ static BOOL handle_fivem_msvcp140_null_vtable_hack( ucontext_t *sigcontext, EXCE
             fprintf( stderr, "wine[fivem-adhesive]: applying msvcp140 null-vtable hack at rip=%p (skip guarded virtual call)\n", (void *)rip );
         RIP_sig(sigcontext) = rip + 9;  /* skip mov/call and execute existing jmp rel32 */
         rec->ExceptionAddress = (void *)(rip + 9);
+        leave_handler( sigcontext );
+        return TRUE;
+    }
+
+    if ((rec->ExceptionInformation[1] == 0x18 || !rec->ExceptionInformation[1]) &&
+        virtual_uninterrupted_read_memory( (BYTE *)rip, sig, sizeof(sig) ) == sizeof(sig) &&
+        sig[0] == 0x48 && sig[1] == 0x8b && sig[2] == 0x40 && sig[3] == 0x18 &&
+        sig[4] == 0xff && sig[5] == 0x15 &&
+        sig[10] == 0x33 && sig[11] == 0xc0 &&
+        sig[12] == 0x48 && sig[13] == 0x83 && sig[14] == 0xc4 && sig[15] == 0x28)
+    {
+        if (fivem_adhesive_signal_debug_enabled())
+            fprintf( stderr, "wine[fivem-adhesive]: applying msvcp140 +0x18 null-vtable hack at rip=%p (skip guarded virtual call)\n",
+                     (void *)rip );
+        RIP_sig(sigcontext) = rip + 10;  /* skip mov [rax+0x18] and call [rip+disp32] */
+        rec->ExceptionAddress = (void *)(rip + 10);
         leave_handler( sigcontext );
         return TRUE;
     }
@@ -3249,8 +3265,8 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
     }
     if (handle_syscall_fault( ucontext, &rec, &context.c )) return;
     if (handle_fivem_adhesive_ud2_hack( ucontext, &rec )) return;
-    if (handle_fivem_adhesive_null_deref_hack( ucontext, &rec )) return;
     if (handle_fivem_msvcp140_null_vtable_hack( ucontext, &rec )) return;
+    if (handle_fivem_adhesive_null_deref_hack( ucontext, &rec )) return;
     setup_raise_exception( ucontext, &rec, &context );
 }
 

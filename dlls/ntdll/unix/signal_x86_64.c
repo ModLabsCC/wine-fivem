@@ -2230,6 +2230,65 @@ static BOOL handle_fivem_adhesive_null_deref_hack( ucontext_t *sigcontext, EXCEP
             leave_handler( sigcontext );
             return TRUE;
         }
+
+        if ((mod == 0 || mod == 1) && rm == 1)
+        {
+            disp8 = (mod == 1) ? (signed char)sig[3] : 0;
+            if (!RCX_sig(sigcontext) ||
+                virtual_uninterrupted_read_memory( (BYTE *)(RCX_sig(sigcontext) + disp8), &probe, 16 ) != 16)
+            {
+                replacement = get_fivem_adhesive_synth_state() - disp8;
+            }
+            else replacement = RCX_sig(sigcontext);
+
+            if (fivem_adhesive_signal_debug_enabled())
+                fprintf( stderr, "wine[fivem-adhesive]: substituting NULL/invalid [rcx+%d] source at %p with %p\n",
+                         (int)disp8, (void *)rip, (void *)replacement );
+            RCX_sig(sigcontext) = replacement;
+            rec->ExceptionAddress = (void *)rip;
+            leave_handler( sigcontext );
+            return TRUE;
+        }
+    }
+
+    if (sig[0] == 0x41 && sig[1] == 0x0f && sig[2] == 0x10)  /* movups xmm, m128 with rex.b */
+    {
+        modrm = sig[3];
+        mod = modrm >> 6;
+        rm = modrm & 7;
+        if (mod == 1 && (rm == 0 || rm == 1)) disp8 = (signed char)sig[4];
+        else if (mod == 0 && (rm == 0 || rm == 1)) disp8 = 0;
+        else return FALSE;
+
+        if (rm == 0 &&
+            (!R8_sig(sigcontext) ||
+             virtual_uninterrupted_read_memory( (BYTE *)(R8_sig(sigcontext) + disp8), &probe, 16 ) != 16))
+        {
+            replacement = get_fivem_adhesive_synth_state() - disp8;
+
+            if (fivem_adhesive_signal_debug_enabled())
+                fprintf( stderr, "wine[fivem-adhesive]: substituting NULL/invalid [r8+%d] source at %p with %p\n",
+                         (int)disp8, (void *)rip, (void *)replacement );
+            R8_sig(sigcontext) = replacement;
+            rec->ExceptionAddress = (void *)rip;
+            leave_handler( sigcontext );
+            return TRUE;
+        }
+
+        if (rm == 1 &&
+            (!R9_sig(sigcontext) ||
+             virtual_uninterrupted_read_memory( (BYTE *)(R9_sig(sigcontext) + disp8), &probe, 16 ) != 16))
+        {
+            replacement = get_fivem_adhesive_synth_state() - disp8;
+
+            if (fivem_adhesive_signal_debug_enabled())
+                fprintf( stderr, "wine[fivem-adhesive]: substituting NULL/invalid [r9+%d] source at %p with %p\n",
+                         (int)disp8, (void *)rip, (void *)replacement );
+            R9_sig(sigcontext) = replacement;
+            rec->ExceptionAddress = (void *)rip;
+            leave_handler( sigcontext );
+            return TRUE;
+        }
     }
 
     if (sig[0] == 0x48 && sig[1] == 0x8b)  /* mov r64, m64 */
@@ -2290,6 +2349,65 @@ static BOOL handle_fivem_adhesive_null_deref_hack( ucontext_t *sigcontext, EXCEP
         }
     }
 
+    if (sig[0] == 0x8b)  /* mov r32, m32 */
+    {
+        BOOL have_disp = FALSE;
+
+        modrm = sig[1];
+        mod = modrm >> 6;
+        rm = modrm & 7;
+
+        if (mod == 1 && (rm == 0 || rm == 2))
+        {
+            disp8 = (signed char)sig[2];
+            have_disp = TRUE;
+        }
+        else if (mod == 0 && (rm == 0 || rm == 2))
+        {
+            disp8 = 0;
+            have_disp = TRUE;
+        }
+
+        if (have_disp && rm == 0 &&
+            (!RAX_sig(sigcontext) ||
+             virtual_uninterrupted_read_memory( (BYTE *)(RAX_sig(sigcontext) + disp8), &probe, 4 ) != 4))
+        {
+            if (RSI_sig(sigcontext) &&
+                virtual_uninterrupted_read_memory( (BYTE *)(RSI_sig(sigcontext) + disp8), &probe, 1 ) == 1)
+                replacement = RSI_sig(sigcontext);
+            else if (RDI_sig(sigcontext) &&
+                     virtual_uninterrupted_read_memory( (BYTE *)(RDI_sig(sigcontext) + disp8), &probe, 1 ) == 1)
+                replacement = RDI_sig(sigcontext);
+            else if (RDX_sig(sigcontext) &&
+                     virtual_uninterrupted_read_memory( (BYTE *)(RDX_sig(sigcontext) + disp8), &probe, 1 ) == 1)
+                replacement = RDX_sig(sigcontext);
+            else replacement = get_fivem_adhesive_synth_state() - disp8;
+
+            if (fivem_adhesive_signal_debug_enabled())
+                fprintf( stderr, "wine[fivem-adhesive]: substituting NULL/invalid dword [rax+%d] source at %p with %p\n",
+                         (int)disp8, (void *)rip, (void *)replacement );
+            RAX_sig(sigcontext) = replacement;
+            rec->ExceptionAddress = (void *)rip;
+            leave_handler( sigcontext );
+            return TRUE;
+        }
+
+        if (have_disp && rm == 2 &&
+            (!RDX_sig(sigcontext) ||
+             virtual_uninterrupted_read_memory( (BYTE *)(RDX_sig(sigcontext) + disp8), &probe, 4 ) != 4))
+        {
+            replacement = get_fivem_adhesive_synth_state() - disp8;
+
+            if (fivem_adhesive_signal_debug_enabled())
+                fprintf( stderr, "wine[fivem-adhesive]: substituting NULL/invalid dword [rdx+%d] source at %p with %p\n",
+                         (int)disp8, (void *)rip, (void *)replacement );
+            RDX_sig(sigcontext) = replacement;
+            rec->ExceptionAddress = (void *)rip;
+            leave_handler( sigcontext );
+            return TRUE;
+        }
+    }
+
     if (sig[0] == 0x80)  /* cmp byte ptr [rdi+disp8], imm8 */
     {
         BYTE reg;
@@ -2315,6 +2433,216 @@ static BOOL handle_fivem_adhesive_null_deref_hack( ucontext_t *sigcontext, EXCEP
             }
         }
     }
+
+    if (sig[0] == 0xf6)  /* test byte ptr [r/m8], imm8 */
+    {
+        BYTE reg;
+        modrm = sig[1];
+        mod = modrm >> 6;
+        reg = (modrm >> 3) & 7;
+        rm = modrm & 7;
+        if (reg == 0 && (mod == 0 || mod == 1) && rm == 2)
+        {
+            disp8 = (mod == 1) ? (signed char)sig[2] : 0;
+            if (!RDX_sig(sigcontext) ||
+                virtual_uninterrupted_read_memory( (BYTE *)(RDX_sig(sigcontext) + disp8), &probe, 1 ) != 1)
+            {
+                replacement = get_fivem_adhesive_synth_state() - disp8;
+
+                if (fivem_adhesive_signal_debug_enabled())
+                    fprintf( stderr, "wine[fivem-adhesive]: substituting NULL/invalid test-byte [rdx+%d] source at %p with %p\n",
+                             (int)disp8, (void *)rip, (void *)replacement );
+                RDX_sig(sigcontext) = replacement;
+                rec->ExceptionAddress = (void *)rip;
+                leave_handler( sigcontext );
+                return TRUE;
+            }
+        }
+    }
+
+    /* REX.W TEST r/m64, r64 with SIB addressing: 48 85 ModR/M SIB [disp8]
+     * This handles adhesive JIT shellcode on the stack doing things like
+     * test [rsi+rdi+0x48], rsi where the effective address hits the null page. */
+    if (sig[0] == 0x48 && sig[1] == 0x85)
+    {
+        BYTE sib;
+        int sib_base_reg, sib_index_reg;
+        ULONG_PTR *base_ptr, *index_ptr;
+        ULONG_PTR base_val, index_val;
+
+        modrm = sig[2];
+        mod = modrm >> 6;
+        rm = modrm & 7;
+
+        if (rm == 4 && (mod == 0 || mod == 1))  /* SIB follows */
+        {
+            sib = sig[3];
+            sib_base_reg = sib & 7;
+            sib_index_reg = (sib >> 3) & 7;
+            disp8 = (mod == 1) ? (signed char)sig[4] : 0;
+
+            /* Get base register value */
+            switch (sib_base_reg)
+            {
+                case 0: base_val = RAX_sig(sigcontext); break;
+                case 1: base_val = RCX_sig(sigcontext); break;
+                case 2: base_val = RDX_sig(sigcontext); break;
+                case 3: base_val = RBX_sig(sigcontext); break;
+                case 4: base_val = RSP_sig(sigcontext); break;
+                case 5: base_val = (mod == 0) ? 0 : RBP_sig(sigcontext); break;
+                case 6: base_val = RSI_sig(sigcontext); break;
+                case 7: base_val = RDI_sig(sigcontext); break;
+                default: base_val = 0; break;
+            }
+
+            /* Get index register value */
+            switch (sib_index_reg)
+            {
+                case 0: index_val = RAX_sig(sigcontext); break;
+                case 1: index_val = RCX_sig(sigcontext); break;
+                case 2: index_val = RDX_sig(sigcontext); break;
+                case 3: index_val = RBX_sig(sigcontext); break;
+                case 4: index_val = 0; break;  /* no index */
+                case 5: index_val = RBP_sig(sigcontext); break;
+                case 6: index_val = RSI_sig(sigcontext); break;
+                case 7: index_val = RDI_sig(sigcontext); break;
+                default: index_val = 0; break;
+            }
+
+            if (fault < 0x10000)  /* null-page deref */
+            {
+                /* Point the base register at synth_state minus the displacement */
+                replacement = get_fivem_adhesive_synth_state() - disp8;
+
+                if (fivem_adhesive_signal_debug_enabled())
+                {
+                    fprintf( stderr, "wine[fivem-adhesive]: substituting NULL/invalid TEST SIB [base=%p+index=%p+%d] at %p with base=%p index=0\n",
+                             (void *)base_val, (void *)index_val, (int)disp8, (void *)rip, (void *)replacement );
+
+                    /* Dump shellcode: read forward from crash point (guaranteed readable since CPU was executing it),
+                     * then probe backward in 64-byte chunks to find the start */
+                    {
+                        BYTE fwd[256];
+                        int fwd_read, bwd_total = 0, i;
+                        BYTE bwd[512];
+
+                        /* Forward read: direct memcpy since we know this memory is executable */
+                        fwd_read = virtual_uninterrupted_read_memory( (BYTE *)rip, fwd, sizeof(fwd) );
+                        if (fwd_read <= 0)
+                        {
+                            /* Fallback: try smaller reads */
+                            fwd_read = virtual_uninterrupted_read_memory( (BYTE *)rip, fwd, 64 );
+                        }
+
+                        /* Backward probes: try reading in 64-byte chunks going back */
+                        for (i = 1; i <= 8 && bwd_total < (int)sizeof(bwd); i++)
+                        {
+                            ULONG_PTR probe_addr = rip - (i * 64);
+                            BYTE chunk[64];
+                            int chunk_read = virtual_uninterrupted_read_memory( (BYTE *)probe_addr, chunk, 64 );
+                            if (chunk_read == 64)
+                            {
+                                memmove( bwd + 64, bwd, bwd_total );
+                                memcpy( bwd, chunk, 64 );
+                                bwd_total += 64;
+                            }
+                            else break;  /* Hit unmapped region, stop */
+                        }
+
+                        fprintf( stderr, "wine[fivem-adhesive]: === SHELLCODE DUMP === crash=%p fwd=%d bwd=%d\n",
+                                 (void *)rip, fwd_read, bwd_total );
+
+                        /* Print backward context */
+                        if (bwd_total > 0)
+                        {
+                            ULONG_PTR bwd_start = rip - bwd_total;
+                            for (i = 0; i < bwd_total; i += 16)
+                            {
+                                int j, line_len = (bwd_total - i < 16) ? bwd_total - i : 16;
+                                fprintf( stderr, "  %p:", (void *)(bwd_start + i) );
+                                for (j = 0; j < line_len; j++)
+                                    fprintf( stderr, " %02x", bwd[i + j] );
+                                fprintf( stderr, "\n" );
+                            }
+                        }
+
+                        /* Print forward context (including crash instruction) */
+                        if (fwd_read > 0)
+                        {
+                            for (i = 0; i < fwd_read; i += 16)
+                            {
+                                int j, line_len = (fwd_read - i < 16) ? fwd_read - i : 16;
+                                fprintf( stderr, "  %p:", (void *)(rip + i) );
+                                for (j = 0; j < line_len; j++)
+                                    fprintf( stderr, " %02x", fwd[i + j] );
+                                fprintf( stderr, "%s\n", (i == 0) ? "  <-- CRASH" : "" );
+                            }
+                        }
+                        fprintf( stderr, "wine[fivem-adhesive]: === END SHELLCODE DUMP ===\n" );
+
+                        /* Register state */
+                        fprintf( stderr, "wine[fivem-adhesive]: REGS:\n"
+                                 "  rax=%p rbx=%p rcx=%p rdx=%p\n"
+                                 "  rsi=%p rdi=%p rbp=%p rsp=%p\n"
+                                 "  r8=%p  r9=%p  r10=%p r11=%p\n"
+                                 "  r12=%p r13=%p r14=%p r15=%p\n",
+                                 (void *)RAX_sig(sigcontext), (void *)RBX_sig(sigcontext),
+                                 (void *)RCX_sig(sigcontext), (void *)RDX_sig(sigcontext),
+                                 (void *)RSI_sig(sigcontext), (void *)RDI_sig(sigcontext),
+                                 (void *)RBP_sig(sigcontext), (void *)RSP_sig(sigcontext),
+                                 (void *)R8_sig(sigcontext), (void *)R9_sig(sigcontext),
+                                 (void *)R10_sig(sigcontext), (void *)R11_sig(sigcontext),
+                                 (void *)R12_sig(sigcontext), (void *)R13_sig(sigcontext),
+                                 (void *)R14_sig(sigcontext), (void *)R15_sig(sigcontext) );
+                    }
+                }
+
+                /* Zero the index and point the base at our synth state */
+                switch (sib_base_reg)
+                {
+                    case 0: RAX_sig(sigcontext) = replacement; break;
+                    case 1: RCX_sig(sigcontext) = replacement; break;
+                    case 2: RDX_sig(sigcontext) = replacement; break;
+                    case 3: RBX_sig(sigcontext) = replacement; break;
+                    case 6: RSI_sig(sigcontext) = replacement; break;
+                    case 7: RDI_sig(sigcontext) = replacement; break;
+                    default: return FALSE;
+                }
+                switch (sib_index_reg)
+                {
+                    case 0: RAX_sig(sigcontext) = 0; break;
+                    case 1: RCX_sig(sigcontext) = 0; break;
+                    case 2: RDX_sig(sigcontext) = 0; break;
+                    case 3: RBX_sig(sigcontext) = 0; break;
+                    case 4: break;  /* no index */
+                    case 5: RBP_sig(sigcontext) = 0; break;
+                    case 6: RSI_sig(sigcontext) = 0; break;
+                    case 7: RDI_sig(sigcontext) = 0; break;
+                    default: break;
+                }
+                rec->ExceptionAddress = (void *)rip;
+                leave_handler( sigcontext );
+                return TRUE;
+            }
+        }
+    }
+
+    /* Fallback: dump all registers for unhandled AVs so we can debug without a minidump */
+    if (fivem_adhesive_signal_debug_enabled())
+        fprintf( stderr, "wine[fivem-adhesive]: UNHANDLED AV at rip=%p fault=%p type=%lu\n"
+                 "  rax=%p rbx=%p rcx=%p rdx=%p\n"
+                 "  rsi=%p rdi=%p rbp=%p rsp=%p\n"
+                 "  r8=%p  r9=%p  r10=%p r11=%p\n"
+                 "  r12=%p r13=%p r14=%p r15=%p\n",
+                 (void *)rip, (void *)fault, (unsigned long)rec->ExceptionInformation[0],
+                 (void *)RAX_sig(sigcontext), (void *)RBX_sig(sigcontext),
+                 (void *)RCX_sig(sigcontext), (void *)RDX_sig(sigcontext),
+                 (void *)RSI_sig(sigcontext), (void *)RDI_sig(sigcontext),
+                 (void *)RBP_sig(sigcontext), (void *)RSP_sig(sigcontext),
+                 (void *)R8_sig(sigcontext), (void *)R9_sig(sigcontext),
+                 (void *)R10_sig(sigcontext), (void *)R11_sig(sigcontext),
+                 (void *)R12_sig(sigcontext), (void *)R13_sig(sigcontext),
+                 (void *)R14_sig(sigcontext), (void *)R15_sig(sigcontext) );
     return FALSE;
 }
 

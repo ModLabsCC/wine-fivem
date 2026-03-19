@@ -2351,62 +2351,192 @@ static BOOL handle_fivem_adhesive_ud2_hack( ucontext_t *sigcontext, EXCEPTION_RE
 
 static BOOL handle_fivem_adhesive_null_deref_hack( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
 {
-    BYTE sig[14];
+    BYTE sig[16];
+    BYTE probe;
+    ULONG_PTR replacement = 0;
     ULONG_PTR rip;
+    ULONG_PTR fault;
+    BYTE modrm, mod, rm;
+    signed char disp8 = 0;
 
     if (rec->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) return FALSE;
     if (!fivem_adhesive_ud2_hack_enabled()) return FALSE;
-    if (rec->NumberParameters < 2 || rec->ExceptionInformation[1]) return FALSE;
+    if (rec->NumberParameters < 2) return FALSE;
+    fault = rec->ExceptionInformation[1];
 
     rip = RIP_sig(sigcontext);
     if (fivem_adhesive_signal_debug_enabled())
         fprintf( stderr, "wine[fivem-adhesive]: first-chance AV rip=%p fault=%p\n",
-                 (void *)rip, (void *)rec->ExceptionInformation[1] );
+                 (void *)rip, (void *)fault );
 
-    if (virtual_uninterrupted_read_memory( (BYTE *)rip, sig, sizeof(sig) ) != sizeof(sig)) return FALSE;
-
-    if (sig[0] == 0x0f && sig[1] == 0x10 && sig[2] == 0x00 &&
-        sig[3] == 0x0f && sig[4] == 0x10 && sig[5] == 0x48 &&
-        sig[6] == 0x0b && sig[7] == 0x0f && sig[8] == 0x11 &&
-        sig[9] == 0x44 && sig[10] == 0x24 && sig[11] == 0x2c)
+    if (virtual_uninterrupted_read_memory( (BYTE *)rip, sig, sizeof(sig) ) != sizeof(sig))
     {
-        TRACE_(seh)( "FiveM adhesive NULL-deref hack: bypassing [rax] fault at %p via safe return path\n", (void *)rip );
-        RIP_sig(sigcontext) = rip + 0x46;
-        rec->ExceptionAddress = (void *)(rip + 0x46);
-        leave_handler( sigcontext );
-        return TRUE;
+        if (fivem_adhesive_signal_debug_enabled())
+            fprintf( stderr, "wine[fivem-adhesive]: AV read failed at %p\n", (void *)rip );
+        return FALSE;
     }
 
-    if (sig[0] == 0x0f && sig[1] == 0x10 && sig[2] == 0x02 &&
-        sig[3] == 0x0f && sig[4] == 0x10 && sig[5] == 0x4a &&
-        sig[6] == 0x0b && sig[7] == 0x0f && sig[8] == 0x11 &&
-        sig[9] == 0x44 && sig[10] == 0x24 && sig[11] == 0x47)
+    if (fivem_adhesive_signal_debug_enabled())
+        fprintf( stderr, "wine[fivem-adhesive]: AV window @%p: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                 (void *)rip, sig[0], sig[1], sig[2], sig[3], sig[4], sig[5], sig[6], sig[7],
+                 sig[8], sig[9], sig[10], sig[11], sig[12], sig[13], sig[14], sig[15] );
+
+    if (sig[0] == 0x0f && sig[1] == 0x10)  /* movups xmm, m128 */
     {
-        TRACE_(seh)( "FiveM adhesive NULL-deref hack: bypassing fault at %p via safe return path\n", (void *)rip );
-        RIP_sig(sigcontext) = rip + 0x35;  /* jump to function cleanup path at +0x249c */
-        rec->ExceptionAddress = (void *)(rip + 0x35);
-        leave_handler( sigcontext );
-        return TRUE;
+        modrm = sig[2];
+        mod = modrm >> 6;
+        rm = modrm & 7;
+
+        if (mod == 0 && rm == 0)
+        {
+            if (!RAX_sig(sigcontext) ||
+                virtual_uninterrupted_read_memory( (BYTE *)RAX_sig(sigcontext), &probe, 16 ) != 16)
+            {
+                if (RSI_sig(sigcontext) &&
+                    virtual_uninterrupted_read_memory( (BYTE *)RSI_sig(sigcontext), &probe, 1 ) == 1)
+                    replacement = RSI_sig(sigcontext);
+                else if (RDI_sig(sigcontext) &&
+                         virtual_uninterrupted_read_memory( (BYTE *)RDI_sig(sigcontext), &probe, 1 ) == 1)
+                    replacement = RDI_sig(sigcontext);
+                else replacement = (ULONG_PTR)(fivem_adhesive_zerobuf + 256);
+            }
+            else replacement = RAX_sig(sigcontext);
+
+            if (fivem_adhesive_signal_debug_enabled())
+                fprintf( stderr, "wine[fivem-adhesive]: substituting NULL/invalid [rax] source at %p with %p\n",
+                         (void *)rip, (void *)replacement );
+            RAX_sig(sigcontext) = replacement;
+            rec->ExceptionAddress = (void *)rip;
+            leave_handler( sigcontext );
+            return TRUE;
+        }
+
+        if (mod == 0 && rm == 2)
+        {
+            if (!RDX_sig(sigcontext) ||
+                virtual_uninterrupted_read_memory( (BYTE *)RDX_sig(sigcontext), &probe, 16 ) != 16)
+            {
+                if (RSI_sig(sigcontext) &&
+                    virtual_uninterrupted_read_memory( (BYTE *)RSI_sig(sigcontext), &probe, 1 ) == 1)
+                    replacement = RSI_sig(sigcontext);
+                else if (RDI_sig(sigcontext) &&
+                         virtual_uninterrupted_read_memory( (BYTE *)RDI_sig(sigcontext), &probe, 1 ) == 1)
+                    replacement = RDI_sig(sigcontext);
+                else if (RAX_sig(sigcontext) &&
+                         virtual_uninterrupted_read_memory( (BYTE *)RAX_sig(sigcontext), &probe, 1 ) == 1)
+                    replacement = RAX_sig(sigcontext);
+                else replacement = (ULONG_PTR)(fivem_adhesive_zerobuf + 256);
+            }
+            else replacement = RDX_sig(sigcontext);
+
+            if (fivem_adhesive_signal_debug_enabled())
+                fprintf( stderr, "wine[fivem-adhesive]: substituting NULL/invalid [rdx] source at %p with %p\n",
+                         (void *)rip, (void *)replacement );
+            RDX_sig(sigcontext) = replacement;
+            rec->ExceptionAddress = (void *)rip;
+            leave_handler( sigcontext );
+            return TRUE;
+        }
     }
 
-    if (sig[0] == 0x0f && sig[1] == 0x10 && sig[2] == 0x4a &&
-        sig[3] == 0x0b && sig[4] == 0x0f && sig[5] == 0x11 &&
-        sig[6] == 0x44 && sig[7] == 0x24 && sig[8] == 0x47 &&
-        sig[9] == 0x0f && sig[10] == 0x11 && sig[11] == 0x4c &&
-        sig[12] == 0x24 && sig[13] == 0x52)
+    if (sig[0] == 0x48 && sig[1] == 0x8b)  /* mov r64, m64 */
     {
-        TRACE_(seh)( "FiveM adhesive NULL-deref hack: bypassing [rdx+0xb] fault at %p via safe return path\n", (void *)rip );
-        RIP_sig(sigcontext) = rip + 0x32;
-        rec->ExceptionAddress = (void *)(rip + 0x32);
-        leave_handler( sigcontext );
-        return TRUE;
+        modrm = sig[2];
+        mod = modrm >> 6;
+        rm = modrm & 7;
+        if (mod == 1 && (rm == 0 || rm == 2)) disp8 = (signed char)sig[3];
+        else if (mod == 0 && (rm == 0 || rm == 2)) disp8 = 0;
+        else return FALSE;
+
+        if (rm == 0 &&
+            (!RAX_sig(sigcontext) ||
+             virtual_uninterrupted_read_memory( (BYTE *)(RAX_sig(sigcontext) + disp8), &probe, 8 ) != 8))
+        {
+            if (RSI_sig(sigcontext) &&
+                virtual_uninterrupted_read_memory( (BYTE *)(RSI_sig(sigcontext) + disp8), &probe, 1 ) == 1)
+                replacement = RSI_sig(sigcontext);
+            else if (RDI_sig(sigcontext) &&
+                     virtual_uninterrupted_read_memory( (BYTE *)(RDI_sig(sigcontext) + disp8), &probe, 1 ) == 1)
+                replacement = RDI_sig(sigcontext);
+            else if (RDX_sig(sigcontext) &&
+                     virtual_uninterrupted_read_memory( (BYTE *)(RDX_sig(sigcontext) + disp8), &probe, 1 ) == 1)
+                replacement = RDX_sig(sigcontext);
+            else replacement = (ULONG_PTR)(fivem_adhesive_zerobuf + 256) - disp8;
+
+            if (fivem_adhesive_signal_debug_enabled())
+                fprintf( stderr, "wine[fivem-adhesive]: substituting NULL/invalid [rax+%d] source at %p with %p\n",
+                         (int)disp8, (void *)rip, (void *)replacement );
+            RAX_sig(sigcontext) = replacement;
+            rec->ExceptionAddress = (void *)rip;
+            leave_handler( sigcontext );
+            return TRUE;
+        }
+
+        if (rm == 2 &&
+            (!RDX_sig(sigcontext) ||
+             virtual_uninterrupted_read_memory( (BYTE *)(RDX_sig(sigcontext) + disp8), &probe, 8 ) != 8))
+        {
+            if (RSI_sig(sigcontext) &&
+                virtual_uninterrupted_read_memory( (BYTE *)(RSI_sig(sigcontext) + disp8), &probe, 1 ) == 1)
+                replacement = RSI_sig(sigcontext);
+            else if (RDI_sig(sigcontext) &&
+                     virtual_uninterrupted_read_memory( (BYTE *)(RDI_sig(sigcontext) + disp8), &probe, 1 ) == 1)
+                replacement = RDI_sig(sigcontext);
+            else if (RAX_sig(sigcontext) &&
+                     virtual_uninterrupted_read_memory( (BYTE *)(RAX_sig(sigcontext) + disp8), &probe, 1 ) == 1)
+                replacement = RAX_sig(sigcontext);
+            else replacement = (ULONG_PTR)(fivem_adhesive_zerobuf + 256) - disp8;
+
+            if (fivem_adhesive_signal_debug_enabled())
+                fprintf( stderr, "wine[fivem-adhesive]: substituting NULL/invalid [rdx+%d] source at %p with %p\n",
+                         (int)disp8, (void *)rip, (void *)replacement );
+            RDX_sig(sigcontext) = replacement;
+            rec->ExceptionAddress = (void *)rip;
+            leave_handler( sigcontext );
+            return TRUE;
+        }
+    }
+
+    if (sig[0] == 0x80)  /* cmp byte ptr [rdi+disp8], imm8 */
+    {
+        BYTE reg;
+        modrm = sig[1];
+        mod = modrm >> 6;
+        reg = (modrm >> 3) & 7;
+        rm = modrm & 7;
+        if (mod == 1 && reg == 7 && rm == 7)
+        {
+            disp8 = (signed char)sig[2];
+            if (!RDI_sig(sigcontext) ||
+                virtual_uninterrupted_read_memory( (BYTE *)(RDI_sig(sigcontext) + disp8), &probe, 1 ) != 1)
+            {
+                if (RSI_sig(sigcontext) &&
+                    virtual_uninterrupted_read_memory( (BYTE *)(RSI_sig(sigcontext) + disp8), &probe, 1 ) == 1)
+                    replacement = RSI_sig(sigcontext);
+                else if (RDX_sig(sigcontext) &&
+                         virtual_uninterrupted_read_memory( (BYTE *)(RDX_sig(sigcontext) + disp8), &probe, 1 ) == 1)
+                    replacement = RDX_sig(sigcontext);
+                else if (RAX_sig(sigcontext) &&
+                         virtual_uninterrupted_read_memory( (BYTE *)(RAX_sig(sigcontext) + disp8), &probe, 1 ) == 1)
+                    replacement = RAX_sig(sigcontext);
+                else replacement = (ULONG_PTR)(fivem_adhesive_zerobuf + 256) - disp8;
+
+                if (fivem_adhesive_signal_debug_enabled())
+                    fprintf( stderr, "wine[fivem-adhesive]: substituting NULL/invalid [rdi+%d] source at %p with %p\n",
+                             (int)disp8, (void *)rip, (void *)replacement );
+                RDI_sig(sigcontext) = replacement;
+                rec->ExceptionAddress = (void *)rip;
+                leave_handler( sigcontext );
+                return TRUE;
+            }
+        }
     }
     return FALSE;
 }
 
 static BOOL handle_fivem_msvcp140_null_vtable_hack( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
 {
-    BYTE sig[10];
+    BYTE sig[16];
     ULONG_PTR rip;
 
     if (rec->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) return FALSE;

@@ -2817,6 +2817,18 @@ static inline BOOL handle_interrupt( ucontext_t *sigcontext, EXCEPTION_RECORD *r
     {
     case 0x29:
         /* __fastfail: process state is corrupted */
+        if (fivem_adhesive_ud2_hack_enabled())
+        {
+            /* When adhesive hacks are active, our register substitutions corrupt the stack
+             * cookie, causing __security_check_cookie to fail and trigger __fastfail(2).
+             * Skip past the INT 0x29 instruction (2 bytes) to prevent process termination. */
+            if (fivem_adhesive_signal_debug_enabled())
+                fprintf( stderr, "wine[fivem-adhesive]: skipping __fastfail (int $0x29) at %p, rcx=%p\n",
+                         (void *)RIP_sig(sigcontext), (void *)RCX_sig(sigcontext) );
+            RIP_sig(sigcontext) += 2;
+            leave_handler( sigcontext );
+            return TRUE;
+        }
         rec->ExceptionCode = STATUS_STACK_BUFFER_OVERRUN;
         rec->ExceptionFlags = EXCEPTION_NONCONTINUABLE;
         rec->NumberParameters = 1;

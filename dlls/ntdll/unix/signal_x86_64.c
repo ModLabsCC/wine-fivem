@@ -2200,13 +2200,7 @@ static BOOL handle_fivem_adhesive_null_deref_hack( ucontext_t *sigcontext, EXCEP
             if (!RAX_sig(sigcontext) ||
                 virtual_uninterrupted_read_memory( (BYTE *)RAX_sig(sigcontext), &probe, 16 ) != 16)
             {
-                if (RSI_sig(sigcontext) &&
-                    virtual_uninterrupted_read_memory( (BYTE *)RSI_sig(sigcontext), &probe, 1 ) == 1)
-                    replacement = RSI_sig(sigcontext);
-                else if (RDI_sig(sigcontext) &&
-                         virtual_uninterrupted_read_memory( (BYTE *)RDI_sig(sigcontext), &probe, 1 ) == 1)
-                    replacement = RDI_sig(sigcontext);
-                else replacement = (ULONG_PTR)(fivem_adhesive_zerobuf + 256);
+                replacement = get_fivem_adhesive_synth_state();
             }
             else replacement = RAX_sig(sigcontext);
 
@@ -2224,16 +2218,7 @@ static BOOL handle_fivem_adhesive_null_deref_hack( ucontext_t *sigcontext, EXCEP
             if (!RDX_sig(sigcontext) ||
                 virtual_uninterrupted_read_memory( (BYTE *)RDX_sig(sigcontext), &probe, 16 ) != 16)
             {
-                if (RSI_sig(sigcontext) &&
-                    virtual_uninterrupted_read_memory( (BYTE *)RSI_sig(sigcontext), &probe, 1 ) == 1)
-                    replacement = RSI_sig(sigcontext);
-                else if (RDI_sig(sigcontext) &&
-                         virtual_uninterrupted_read_memory( (BYTE *)RDI_sig(sigcontext), &probe, 1 ) == 1)
-                    replacement = RDI_sig(sigcontext);
-                else if (RAX_sig(sigcontext) &&
-                         virtual_uninterrupted_read_memory( (BYTE *)RAX_sig(sigcontext), &probe, 1 ) == 1)
-                    replacement = RAX_sig(sigcontext);
-                else replacement = (ULONG_PTR)(fivem_adhesive_zerobuf + 256);
+                replacement = get_fivem_adhesive_synth_state();
             }
             else replacement = RDX_sig(sigcontext);
 
@@ -2269,7 +2254,7 @@ static BOOL handle_fivem_adhesive_null_deref_hack( ucontext_t *sigcontext, EXCEP
             else if (RDX_sig(sigcontext) &&
                      virtual_uninterrupted_read_memory( (BYTE *)(RDX_sig(sigcontext) + disp8), &probe, 1 ) == 1)
                 replacement = RDX_sig(sigcontext);
-            else replacement = (ULONG_PTR)(fivem_adhesive_zerobuf + 256) - disp8;
+            else replacement = get_fivem_adhesive_synth_state() - disp8;
 
             if (fivem_adhesive_signal_debug_enabled())
                 fprintf( stderr, "wine[fivem-adhesive]: substituting NULL/invalid [rax+%d] source at %p with %p\n",
@@ -2293,7 +2278,7 @@ static BOOL handle_fivem_adhesive_null_deref_hack( ucontext_t *sigcontext, EXCEP
             else if (RAX_sig(sigcontext) &&
                      virtual_uninterrupted_read_memory( (BYTE *)(RAX_sig(sigcontext) + disp8), &probe, 1 ) == 1)
                 replacement = RAX_sig(sigcontext);
-            else replacement = (ULONG_PTR)(fivem_adhesive_zerobuf + 256) - disp8;
+            else replacement = get_fivem_adhesive_synth_state() - disp8;
 
             if (fivem_adhesive_signal_debug_enabled())
                 fprintf( stderr, "wine[fivem-adhesive]: substituting NULL/invalid [rdx+%d] source at %p with %p\n",
@@ -2318,16 +2303,7 @@ static BOOL handle_fivem_adhesive_null_deref_hack( ucontext_t *sigcontext, EXCEP
             if (!RDI_sig(sigcontext) ||
                 virtual_uninterrupted_read_memory( (BYTE *)(RDI_sig(sigcontext) + disp8), &probe, 1 ) != 1)
             {
-                if (RSI_sig(sigcontext) &&
-                    virtual_uninterrupted_read_memory( (BYTE *)(RSI_sig(sigcontext) + disp8), &probe, 1 ) == 1)
-                    replacement = RSI_sig(sigcontext);
-                else if (RDX_sig(sigcontext) &&
-                         virtual_uninterrupted_read_memory( (BYTE *)(RDX_sig(sigcontext) + disp8), &probe, 1 ) == 1)
-                    replacement = RDX_sig(sigcontext);
-                else if (RAX_sig(sigcontext) &&
-                         virtual_uninterrupted_read_memory( (BYTE *)(RAX_sig(sigcontext) + disp8), &probe, 1 ) == 1)
-                    replacement = RAX_sig(sigcontext);
-                else replacement = (ULONG_PTR)(fivem_adhesive_zerobuf + 256) - disp8;
+                replacement = get_fivem_adhesive_synth_state() - disp8;
 
                 if (fivem_adhesive_signal_debug_enabled())
                     fprintf( stderr, "wine[fivem-adhesive]: substituting NULL/invalid [rdi+%d] source at %p with %p\n",

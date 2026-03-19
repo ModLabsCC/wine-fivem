@@ -2136,15 +2136,7 @@ static BOOL handle_fivem_adhesive_ud2_hack( ucontext_t *sigcontext, EXCEPTION_RE
     if (fivem_adhesive_signal_debug_enabled())
         fprintf( stderr, "wine[fivem-adhesive]: first-chance ILLEGAL_INSTRUCTION rip=%p\n", (void *)rip );
 
-    if (virtual_uninterrupted_read_memory( (BYTE *)rip, sig, sizeof(sig) ) != sizeof(sig))
-    {
-        if (fivem_adhesive_signal_debug_enabled())
-            fprintf( stderr, "wine[fivem-adhesive]: ILLEGAL read failed at %p, applying blind +2 skip\n", (void *)rip );
-        RIP_sig(sigcontext) = rip + 2;
-        rec->ExceptionAddress = (void *)(rip + 2);
-        leave_handler( sigcontext );
-        return TRUE;
-    }
+    if (virtual_uninterrupted_read_memory( (BYTE *)rip, sig, sizeof(sig) ) != sizeof(sig)) return FALSE;
 
     if (fivem_adhesive_signal_debug_enabled())
         fprintf( stderr, "wine[fivem-adhesive]: ILLEGAL window @%p: %02x %02x %02x %02x %02x %02x %02x %02x\n",
@@ -2152,19 +2144,203 @@ static BOOL handle_fivem_adhesive_ud2_hack( ucontext_t *sigcontext, EXCEPTION_RE
 
     while (ud2_len + 1 < sizeof(sig) && sig[ud2_len] == 0x0f && sig[ud2_len + 1] == 0x0b) ud2_len += 2;
 
-    if (ud2_len >= 2 && ud2_len + 2 < sizeof(sig) &&
-        sig[ud2_len] == 0x45 && sig[ud2_len + 1] == 0x31 && sig[ud2_len + 2] == 0xd2)
-    {
-        TRACE_(seh)( "FiveM adhesive UD2 hack: bypassing trap at %p via safe return path\n", (void *)rip );
-        RIP_sig(sigcontext) = rip + 0x6d;  /* jump to function cleanup path at +0x249c */
-        rec->ExceptionAddress = (void *)(rip + 0x6d);
-        leave_handler( sigcontext );
-        return TRUE;
-    }
-
     if (ud2_len >= 2)
     {
-        TRACE_(seh)( "FiveM adhesive UD2 hack: skipping %u-byte UD2 sequence at %p\n", ud2_len, (void *)rip );
+        if (ud2_len >= 4 &&
+            sig[0] == 0x0f && sig[1] == 0x0b &&
+            sig[2] == 0x0f && sig[3] == 0x0b &&
+            sig[4] == 0x45 && sig[5] == 0x31 &&
+            sig[6] == 0xd2 && sig[7] == 0x45)
+        {
+            target = rip - 0x74;
+            if (virtual_uninterrupted_read_memory( (BYTE *)target, marker, sizeof(marker) ) == sizeof(marker) &&
+                marker[0] == 0x0f && marker[1] == 0xb6 && marker[2] == 0x42 &&
+                marker[3] == 0x0c && marker[4] == 0xf6)
+            {
+                attempted_repair = TRUE;
+                stack_ptr = RSP_sig(sigcontext);
+                stack_min = stack_ptr - 0x20000;
+                stack_max = stack_ptr + 0x20000;
+                for (i = 0; i < ARRAY_SIZE(reg_candidates) && candidate_count < ARRAY_SIZE(candidates); i++)
+                {
+                    candidate = reg_candidates[i];
+                    candidates[candidate_count++] = candidate;
+                    if (candidate > 0x42 && candidate_count < ARRAY_SIZE(candidates))
+                        candidates[candidate_count++] = candidate - 0x42;
+                    if (candidate > 0x27 && candidate_count < ARRAY_SIZE(candidates))
+                        candidates[candidate_count++] = candidate - 0x27;
+                }
+
+                for (i = 0; i < candidate_count; i++)
+                {
+                    candidate = candidates[i];
+                    if (!candidate || candidate < 0x10000 || candidate > 0x00007fffffffffffULL) continue;
+                    if (candidate >= stack_min && candidate <= stack_max) continue;
+                    for (j = 0; j < i; j++)
+                        if (candidates[j] == candidate) break;
+                    if (j != i) continue;
+
+                    data_ptr = candidate;
+
+                    if (virtual_uninterrupted_read_memory( (BYTE *)(data_ptr + 0x0c), &state[0], 1 ) != 1) continue;
+                    if (virtual_uninterrupted_read_memory( (BYTE *)(data_ptr + 0x27), &state[1], 1 ) != 1) continue;
+                    if (virtual_uninterrupted_read_memory( (BYTE *)(data_ptr + 0x42), &state[2], 1 ) != 1) continue;
+                    patched[0] = (state[0] & ~0x03) | 0x03;  /* (~b & 3) == 0 */
+                    patched[1] = (state[1] & ~0x03) | 0x01;  /* (b & 3) == 1 */
+                    patched[2] = (state[2] & ~0x03) | 0x03;  /* (~b & 3) == 0 */
+
+                    core_ok = (patched[0] == state[0] ||
+                               virtual_uninterrupted_write_memory( (BYTE *)(data_ptr + 0x0c), &patched[0], 1 ) == 1) &&
+                              (patched[1] == state[1] ||
+                               virtual_uninterrupted_write_memory( (BYTE *)(data_ptr + 0x27), &patched[1], 1 ) == 1) &&
+                              (patched[2] == state[2] ||
+                               virtual_uninterrupted_write_memory( (BYTE *)(data_ptr + 0x42), &patched[2], 1 ) == 1);
+                    if (!core_ok) continue;
+
+                    extras_ok = virtual_uninterrupted_read_memory( (BYTE *)(data_ptr + 0x29), &len_state, sizeof(len_state) ) == sizeof(len_state) &&
+                                virtual_uninterrupted_read_memory( (BYTE *)(data_ptr + 0x28), &flag_state, 1 ) == 1 &&
+                                virtual_uninterrupted_read_memory( (BYTE *)(data_ptr + 0x44), &qword_state, sizeof(qword_state) ) == sizeof(qword_state);
+                    if (extras_ok)
+                    {
+                        len_patched = len_state;
+                        if (len_patched <= 0x0f) len_patched = 0x10; /* force ja -> 0x...2405 path */
+                        flag_patched = 0;
+                        qword_patched = 0;
+
+                        if (len_patched != len_state)
+                            virtual_uninterrupted_write_memory( (BYTE *)(data_ptr + 0x29), &len_patched, sizeof(len_patched) );
+                        if (flag_patched != flag_state)
+                            virtual_uninterrupted_write_memory( (BYTE *)(data_ptr + 0x28), &flag_patched, 1 );
+                        if (qword_patched != qword_state)
+                            virtual_uninterrupted_write_memory( (BYTE *)(data_ptr + 0x44), &qword_patched, sizeof(qword_patched) );
+                    }
+
+                    if (core_ok)
+                    {
+                        if (fivem_adhesive_signal_debug_enabled())
+                            fprintf( stderr, "wine[fivem-adhesive]: repaired adhesive core state at %p (extras:%s) and retrying assert path [candidate %u/%u]\n",
+                                     (void *)data_ptr, extras_ok ? "yes" : "no", i + 1, candidate_count );
+                        RSI_sig(sigcontext) = data_ptr;
+                        RDX_sig(sigcontext) = data_ptr;
+                        RIP_sig(sigcontext) = target;
+                        rec->ExceptionAddress = (void *)target;
+                        leave_handler( sigcontext );
+                        return TRUE;
+                    }
+                }
+
+                if (fivem_adhesive_signal_debug_enabled())
+                {
+                    fprintf( stderr,
+                             "wine[fivem-adhesive]: adhesive assert repair miss (candidates:%u) "
+                             "rax=%p rbx=%p rcx=%p rdx=%p rsi=%p rdi=%p rbp=%p rsp=%p\n",
+                             candidate_count,
+                             (void *)RAX_sig(sigcontext), (void *)RBX_sig(sigcontext),
+                             (void *)RCX_sig(sigcontext), (void *)RDX_sig(sigcontext),
+                             (void *)RSI_sig(sigcontext), (void *)RDI_sig(sigcontext),
+                             (void *)RBP_sig(sigcontext), (void *)RSP_sig(sigcontext) );
+                    fprintf( stderr,
+                             "wine[fivem-adhesive]: adhesive assert repair miss regs "
+                             "r8=%p r9=%p r10=%p r11=%p r12=%p r13=%p r14=%p r15=%p\n",
+                             (void *)R8_sig(sigcontext),  (void *)R9_sig(sigcontext),
+                             (void *)R10_sig(sigcontext), (void *)R11_sig(sigcontext),
+                             (void *)R12_sig(sigcontext), (void *)R13_sig(sigcontext),
+                             (void *)R14_sig(sigcontext), (void *)R15_sig(sigcontext) );
+                }
+
+                fallback_ptr = 0;
+                if (RDX_sig(sigcontext) &&
+                    (RDX_sig(sigcontext) < stack_min || RDX_sig(sigcontext) > stack_max) &&
+                    virtual_uninterrupted_read_memory( (BYTE *)RDX_sig(sigcontext), &state[0], 1 ) == 1)
+                    fallback_ptr = RDX_sig(sigcontext);
+                else if (RSI_sig(sigcontext) &&
+                         (RSI_sig(sigcontext) < stack_min || RSI_sig(sigcontext) > stack_max) &&
+                         virtual_uninterrupted_read_memory( (BYTE *)RSI_sig(sigcontext), &state[0], 1 ) == 1)
+                    fallback_ptr = RSI_sig(sigcontext);
+                else if (RDI_sig(sigcontext) &&
+                         (RDI_sig(sigcontext) < stack_min || RDI_sig(sigcontext) > stack_max) &&
+                         virtual_uninterrupted_read_memory( (BYTE *)RDI_sig(sigcontext), &state[0], 1 ) == 1)
+                    fallback_ptr = RDI_sig(sigcontext);
+                else if (RAX_sig(sigcontext) &&
+                         (RAX_sig(sigcontext) < stack_min || RAX_sig(sigcontext) > stack_max) &&
+                         virtual_uninterrupted_read_memory( (BYTE *)RAX_sig(sigcontext), &state[0], 1 ) == 1)
+                    fallback_ptr = RAX_sig(sigcontext);
+
+                if (fallback_ptr)
+                {
+                    if (fivem_adhesive_signal_debug_enabled())
+                        fprintf( stderr,
+                                 "wine[fivem-adhesive]: adhesive assert fallback using state ptr %p, retrying assert path\n",
+                                 (void *)fallback_ptr );
+                    RSI_sig(sigcontext) = fallback_ptr;
+                    RDX_sig(sigcontext) = fallback_ptr;
+                    RIP_sig(sigcontext) = target;
+                    rec->ExceptionAddress = (void *)target;
+                    leave_handler( sigcontext );
+                    return TRUE;
+                }
+
+                data_ptr = get_fivem_adhesive_synth_state();
+                if (fivem_adhesive_signal_debug_enabled())
+                    fprintf( stderr, "wine[fivem-adhesive]: adhesive assert using synthetic fallback state %p\n",
+                             (void *)data_ptr );
+                RSI_sig(sigcontext) = data_ptr;
+                RDX_sig(sigcontext) = data_ptr;
+                RIP_sig(sigcontext) = target;
+                rec->ExceptionAddress = (void *)target;
+                leave_handler( sigcontext );
+                return TRUE;
+
+                target = rip - 0x2a;
+                if (virtual_uninterrupted_read_memory( (BYTE *)target, fallback, sizeof(fallback) ) == sizeof(fallback) &&
+                    fallback[0] == 0x48 && fallback[1] == 0x8b &&
+                    fallback[2] == 0x84 && fallback[3] == 0x24)
+                {
+                    if (fivem_adhesive_signal_debug_enabled())
+                        fprintf( stderr, "wine[fivem-adhesive]: rerouting adhesive UD2 assert at %p to fallback %p\n",
+                                 (void *)rip, (void *)target );
+                    RIP_sig(sigcontext) = target;
+                    rec->ExceptionAddress = (void *)target;
+                    leave_handler( sigcontext );
+                    return TRUE;
+                }
+            }
+        }
+        else if (attempted_repair && fivem_adhesive_signal_debug_enabled())
+        {
+            fprintf( stderr, "wine[fivem-adhesive]: adhesive assert pattern missing guard marker at %p\n",
+                     (void *)target );
+        }
+
+        if (ud2_len >= 4 &&
+            sig[0] == 0x0f && sig[1] == 0x0b &&
+            sig[2] == 0x0f && sig[3] == 0x0b &&
+            sig[4] == 0x80 && sig[5] == 0x7f &&
+            sig[6] == 0x28 && sig[7] == 0x01)
+        {
+            data_ptr = get_fivem_adhesive_synth_state();
+            if (fivem_adhesive_signal_debug_enabled())
+                fprintf( stderr, "wine[fivem-adhesive]: priming RDI with synthetic state %p for UD2 site %p\n",
+                         (void *)data_ptr, (void *)rip );
+            RDI_sig(sigcontext) = data_ptr;
+        }
+
+        if (ud2_len >= 4 &&
+            sig[0] == 0x0f && sig[1] == 0x0b &&
+            sig[2] == 0x0f && sig[3] == 0x0b &&
+            sig[4] == 0x48 && sig[5] == 0x8b &&
+            sig[6] == 0x52 && sig[7] == 0x02)
+        {
+            data_ptr = get_fivem_adhesive_synth_state();
+            if (fivem_adhesive_signal_debug_enabled())
+                fprintf( stderr, "wine[fivem-adhesive]: priming RDX with synthetic state %p for UD2 site %p\n",
+                         (void *)data_ptr, (void *)rip );
+            RDX_sig(sigcontext) = data_ptr;
+        }
+
+        if (fivem_adhesive_signal_debug_enabled())
+            fprintf( stderr, "wine[fivem-adhesive]: skipping %u-byte UD2 sequence at %p\n",
+                     ud2_len, (void *)rip );
         RIP_sig(sigcontext) = rip + ud2_len;
         rec->ExceptionAddress = (void *)(rip + ud2_len);
         leave_handler( sigcontext );

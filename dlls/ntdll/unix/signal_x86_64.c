@@ -2549,12 +2549,13 @@ static BOOL handle_fivem_msvcp140_null_vtable_hack( ucontext_t *sigcontext, EXCE
 
     if (sig[0] == 0x48 && sig[1] == 0x8b && sig[2] == 0x01 &&
         sig[3] == 0x48 && sig[4] == 0x8b && sig[5] == 0x00 &&
-        sig[6] == 0xff && sig[7] == 0x15)
+        sig[6] == 0xff && sig[7] == 0x15 &&
+        sig[12] == 0xe9)
     {
         if (fivem_adhesive_signal_debug_enabled())
-            fprintf( stderr, "wine[fivem-adhesive]: applying msvcp140 null-vtable hack at rip=%p (jump to safe branch)\n", (void *)rip );
-        RIP_sig(sigcontext) = rip + 0xa6;  /* jump to +0x130ce branch path in msvcp140 */
-        rec->ExceptionAddress = (void *)(rip + 0xa6);
+            fprintf( stderr, "wine[fivem-adhesive]: applying msvcp140 null-vtable hack at rip=%p (skip guarded virtual call)\n", (void *)rip );
+        RIP_sig(sigcontext) = rip + 9;  /* skip mov/call and execute existing jmp rel32 */
+        rec->ExceptionAddress = (void *)(rip + 9);
         leave_handler( sigcontext );
         return TRUE;
     }

@@ -1,3 +1,4 @@
+@ stub CalculateAvailableMonitorRect
 @ stub CreateString
 @ stub CreateXamlUIPresenter
 @ stub DeleteString

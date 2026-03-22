@@ -1,8 +1,219 @@
-/* WinRT Windows.UI.Xaml.Markup.XamlReader implementation */
-
+#include <stdio.h>
+#include <wchar.h>
 #include "private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL( xaml );
+
+extern WCHAR wine_xaml_stub_text[4096];
+extern HWND wine_xaml_stub_hwnd;
+struct wine_xaml_node *wine_xaml_root_node = NULL;
+
+static void free_wine_xaml_node(struct wine_xaml_node *node)
+{
+    int i;
+    if (!node) return;
+    for (i = 0; i < node->child_count; i++)
+        free_wine_xaml_node(node->children[i]);
+    free(node->children);
+    free(node);
+}
+
+static unsigned char hex_to_byte(const WCHAR *hex)
+{
+    unsigned char val = 0;
+    int i;
+    for (i = 0; i < 2; i++) {
+        val <<= 4;
+        if (hex[i] >= '0' && hex[i] <= '9') val += hex[i] - '0';
+        else if (hex[i] >= 'a' && hex[i] <= 'f') val += hex[i] - 'a' + 10;
+        else if (hex[i] >= 'A' && hex[i] <= 'F') val += hex[i] - 'A' + 10;
+    }
+    return val;
+}
+
+static DWORD parse_color(const WCHAR *hex)
+{
+    DWORD res = 0;
+    const WCHAR *end;
+    size_t len;
+    if (hex[0] == '#') hex++;
+    
+    end = wcschr(hex, '"');
+    len = end ? (size_t)(end - hex) : wcslen(hex);
+    if (len >= 8) { hex += 2; len -= 2; } /* skip alpha if present */
+    
+    if (len >= 6) {
+        unsigned char r = hex_to_byte(hex);
+        unsigned char g = hex_to_byte(hex + 2);
+        unsigned char b = hex_to_byte(hex + 4);
+        res = RGB(r, g, b);
+    } else if (wcsnicmp(hex, L"White", 5) == 0) res = RGB(255, 255, 255);
+    
+    {
+        FILE *f = fopen("/tmp/xaml_debug.log", "a");
+        if (f) { fprintf(f, "Parsed color '%.*ls' (len %d) -> 0x%08lx\n", (int)len, hex, (int)len, (unsigned long)res); fclose(f); }
+    }
+    return res;
+}
+
+static struct wine_xaml_node *find_node_by_name(struct wine_xaml_node *node, const WCHAR *name)
+{
+    int i;
+    if (!node) return NULL;
+    if (wcscmp(node->name, name) == 0) return node;
+    for (i = 0; i < node->child_count; i++) {
+        struct wine_xaml_node *found = find_node_by_name(node->children[i], name);
+        if (found) return found;
+    }
+    return NULL;
+}
+
+static struct wine_xaml_node *parse_node(const WCHAR **ptr)
+{
+    struct wine_xaml_node *node = calloc(1, sizeof(*node));
+    const WCHAR *p = *ptr;
+    const WCHAR *tag_end;
+    const WCHAR *bg, *fill, *fg, *txt;
+    int self_closing;
+    
+    p = wcschr(p, '<');
+    if (!p) { free(node); return NULL; }
+    p++;
+    while (*p == '?' || *p == '!' || *p == '/') {
+        p = wcschr(p, '<');
+        if (!p) { free(node); return NULL; }
+        p++;
+    }
+    
+    if (wcsncmp(p, L"Grid", 4) == 0) node->type = XAML_NODE_GRID;
+    else if (wcsncmp(p, L"TextBlock", 9) == 0) node->type = XAML_NODE_TEXTBLOCK;
+    else if (wcsncmp(p, L"Rectangle", 9) == 0) node->type = XAML_NODE_RECTANGLE;
+    else if (wcsncmp(p, L"Border", 6) == 0) node->type = XAML_NODE_BORDER;
+    else if (wcsncmp(p, L"StackPanel", 10) == 0) node->type = XAML_NODE_STACKPANEL;
+    else if (wcsncmp(p, L"Image", 5) == 0) node->type = XAML_NODE_IMAGE;
+    else if (wcsncmp(p, L"Viewbox", 7) == 0) node->type = XAML_NODE_VIEWBOX;
+    else if (wcsncmp(p, L"Path", 4) == 0) node->type = XAML_NODE_PATH;
+    else if (wcsncmp(p, L"ProgressBar", 11) == 0) node->type = XAML_NODE_PROGRESSBAR;
+    else if (wcsncmp(p, L"SwapChainPanel", 14) == 0) node->type = XAML_NODE_SWAPCHAINPANEL;
+    else node->type = XAML_NODE_UNKNOWN;
+    
+    tag_end = wcschr(p, '>');
+    if (!tag_end) { free(node); return NULL; }
+
+    /* Parse Name */
+    {
+        const WCHAR *name_attr = wcsstr(p, L"x:Name=\"");
+        if (!name_attr || name_attr > tag_end) name_attr = wcsstr(p, L"Name=\"");
+        if (name_attr && name_attr < tag_end) {
+            int skip = (wcsncmp(name_attr, L"x:", 2) == 0) ? 8 : 6;
+            const WCHAR *name_end = wcschr(name_attr + skip, '"');
+            if (name_end) {
+            size_t l = name_end - (name_attr + skip);
+            if (l > 127) l = 127;
+            memcpy(node->name, name_attr + skip, l * sizeof(WCHAR));
+            node->name[l] = 0;
+            {
+                FILE *f = fopen("/tmp/xaml_debug.log", "a");
+                if (f) { fprintf(f, "Parsed node type %d with name '%ls'\n", node->type, node->name); fclose(f); }
+            }
+        }
+        }
+    }
+    
+    bg = wcsstr(p, L"Background=\"");
+    if (bg && bg < tag_end) {
+        node->has_bg = 1;
+        node->bg_color = parse_color(bg + 12);
+    }
+    fill = wcsstr(p, L"Fill=\"");
+    if (fill && fill < tag_end) {
+        node->has_fill = 1;
+        node->fill_color = parse_color(fill + 6);
+    }
+    fg = wcsstr(p, L"Foreground=\"");
+    if (fg && fg < tag_end) {
+        node->has_fg = 1;
+        node->fg_color = parse_color(fg + 12);
+    }
+    {
+        const WCHAR *w, *h, *v, *m;
+        w = wcsstr(p, L"Width=\"");
+        if (w && w < tag_end) swscanf(w + 7, L"%f", &node->width);
+        h = wcsstr(p, L"Height=\"");
+        if (h && h < tag_end) swscanf(h + 8, L"%f", &node->height);
+        v = wcsstr(p, L"Value=\"");
+        if (v && v < tag_end) swscanf(v + 7, L"%lf", &node->progress_value);
+        m = wcsstr(p, L"Maximum=\"");
+        if (m && m < tag_end) swscanf(m + 9, L"%lf", &node->progress_max);
+    }
+    
+    /* Parse Text or Image Source or Path Data */
+    txt = wcsstr(p, L"Text=\"");
+    if (!txt || txt > tag_end) txt = wcsstr(p, L"Source=\"");
+    if (!txt || txt > tag_end) txt = wcsstr(p, L"Data=\"");
+    
+    if (txt && txt < tag_end) {
+        const WCHAR *search_attr;
+        if (wcsncmp(txt, L"Text", 4) == 0) search_attr = L"Text=\"";
+        else if (wcsncmp(txt, L"Source", 6) == 0) search_attr = L"Source=\"";
+        else search_attr = L"Data=\"";
+        
+        int skip = wcslen(search_attr);
+        const WCHAR *txt_end = wcschr(txt + skip, '"');
+        if (txt_end) {
+            size_t l = txt_end - (txt + skip);
+            if (l > 500) l = 500;
+            size_t copy_len = l * sizeof(WCHAR);
+            memcpy(node->text, txt + skip, copy_len);
+            node->text[l] = 0;
+            if (wcslen(wine_xaml_stub_text) < 100 && wcsncmp(txt, L"Text", 4) == 0) {
+                memcpy(wine_xaml_stub_text, txt + skip, copy_len);
+                wine_xaml_stub_text[l] = 0;
+            }
+        }
+    }
+    
+    self_closing = (*(tag_end - 1) == '/');
+    *ptr = tag_end + 1;
+    
+    if (!self_closing) {
+        while (1) {
+            struct wine_xaml_node *child;
+            p = *ptr;
+            p = wcschr(p, '<');
+            if (!p) break;
+            if (p[1] == '/') {
+                *ptr = wcschr(p, '>') + 1;
+                break;
+            }
+            child = parse_node(ptr);
+            if (child) {
+                if (node->child_count >= node->child_capacity) {
+                    node->child_capacity = node->child_capacity ? node->child_capacity * 2 : 4;
+                    node->children = realloc(node->children, node->child_capacity * sizeof(void*));
+                }
+                node->children[node->child_count++] = child;
+            }
+        }
+    }
+    return node;
+}
+
+void parse_wine_xaml(const WCHAR *xml)
+{
+    {
+        FILE *f = fopen("/tmp/xaml_debug.log", "a");
+        if (f) {
+            fprintf(f, "==== FIVEM XAML INTERCEPT ====\nPayload Length: %d\nPayload Content:\n%ls\n==============================\n", 
+                (int)wcslen(xml), xml);
+            fclose(f);
+        }
+    }
+
+    if (wine_xaml_root_node) free_wine_xaml_node(wine_xaml_root_node);
+    wine_xaml_root_node = parse_node(&xml);
+    if (wine_xaml_stub_hwnd) InvalidateRect(wine_xaml_stub_hwnd, NULL, TRUE);
+}
 
 static const IID IID_IXamlReaderStatics =
     {0x9891c6bd, 0x534f, 0x4955, {0xb8, 0x5a, 0x8a, 0x8d, 0xc0, 0xdc, 0xa6, 0x02}};
@@ -283,6 +494,7 @@ struct xaml_reader_object
     HSTRING text;
     DOUBLE minimum, maximum, small_change, large_change, value;
     boolean is_indeterminate, show_error, show_paused;
+    struct wine_xaml_node *node;
 };
 
 struct xaml_reader_statics
@@ -560,10 +772,32 @@ static HRESULT WINAPI framework_element_put_Name( IFrameworkElement *iface, HSTR
 }
 
 static HRESULT WINAPI framework_element_FindName( IFrameworkElement *iface, HSTRING name, IInspectable **result )
-{
-    TRACE( "iface %p, name %s, result %p.\n", iface, debugstr_hstring( name ), result );
-    return xaml_reader_named_object_create( name, result );
-}
+    {
+        const WCHAR *name_str = WindowsGetStringRawBuffer( name, NULL );
+        struct wine_xaml_node *found = find_node_by_name(wine_xaml_root_node, name_str);
+        struct xaml_reader_object *obj;
+    
+        ERR( "==== XAML FindName ==== iface %p, name %s, found_node %p.\n", iface, debugstr_hstring( name ), found );
+        
+        if (found) {
+            enum xaml_reader_object_kind kind = XAML_READER_OBJECT_FRAMEWORK_ELEMENT;
+            if (found->type == XAML_NODE_TEXTBLOCK) kind = XAML_READER_OBJECT_TEXT_BLOCK;
+            else if (found->type == XAML_NODE_PROGRESSBAR) kind = XAML_READER_OBJECT_PROGRESS_BAR;
+            else if (found->type == XAML_NODE_SWAPCHAINPANEL) kind = XAML_READER_OBJECT_SWAPCHAIN_PANEL;
+            
+            xaml_reader_object_create(kind, name_str, result);
+            obj = impl_from_IFrameworkElement((IFrameworkElement *)*result);
+            obj->node = found;
+
+            if (found->type == XAML_NODE_PROGRESSBAR) {
+                obj->value = found->progress_value;
+                obj->maximum = found->progress_max;
+            }
+            return S_OK;
+        }
+    
+        return xaml_reader_named_object_create( name, result );
+    }
 
 static HRESULT WINAPI framework_element_SetBinding( IFrameworkElement *iface, IInspectable *dp, IInspectable *binding,
                                                      IInspectable **result )
@@ -822,8 +1056,13 @@ static HRESULT WINAPI range_base_get_Maximum( IRangeBase *iface, DOUBLE *value )
 
 static HRESULT WINAPI range_base_put_Maximum( IRangeBase *iface, DOUBLE value )
 {
+    struct xaml_reader_object *impl = impl_from_IRangeBase( iface );
     TRACE( "iface %p, value %f.\n", iface, value );
-    impl_from_IRangeBase( iface )->maximum = value;
+    impl->maximum = value;
+    if (impl->node) {
+        impl->node->progress_max = value;
+        if (wine_xaml_stub_hwnd) InvalidateRect(wine_xaml_stub_hwnd, NULL, TRUE);
+    }
     return S_OK;
 }
 
@@ -1062,6 +1301,39 @@ static HRESULT WINAPI text_block_put_Text( ITextBlock *iface, HSTRING value )
 
     if (impl->text) WindowsDeleteString( impl->text );
     impl->text = copy;
+    
+    /* WINE STUB HACK: Capture dynamic text updates into the DOM */
+    if (value)
+    {
+        UINT32 len;
+        const WCHAR *str = WindowsGetStringRawBuffer( value, &len );
+        if (str && len < 4000)
+        {
+            {
+                FILE *f = fopen("/tmp/xaml_debug.log", "a");
+                if (f) {
+                    fprintf(f, "==== FIVEM DYNAMIC TEXT UPDATE ====\nNew Text: %ls\n=================================\n", str);
+                    fclose(f);
+                }
+            }
+            if (impl->node)
+            {
+                UINT32 copy_count = len > 1023 ? 1023 : len;
+                memcpy(impl->node->text, str, copy_count * sizeof(WCHAR));
+                impl->node->text[copy_count] = 0;
+            }
+            else
+            {
+                /* Fallback: Update global text if object isn't linked to a node */
+                UINT32 copy_count = len > 4095 ? 4095 : len;
+                memcpy(wine_xaml_stub_text, str, copy_count * sizeof(WCHAR));
+                wine_xaml_stub_text[copy_count] = 0;
+            }
+            
+            if (wine_xaml_stub_hwnd) InvalidateRect(wine_xaml_stub_hwnd, NULL, TRUE);
+        }
+    }
+
     return S_OK;
 }
 
@@ -1197,7 +1469,7 @@ static HRESULT WINAPI swap_chain_panel_native_SetSwapChain( ISwapChainPanelNativ
 {
     struct xaml_reader_object *impl = impl_from_ISwapChainPanelNative( iface );
 
-    TRACE( "iface %p, swapchain %p.\n", iface, swapchain );
+    ERR( "==== XAML SetSwapChain ==== iface %p, swapchain %p.\n", iface, swapchain );
 
     if (swapchain) IUnknown_AddRef( swapchain );
     if (impl->swapchain) IUnknown_Release( impl->swapchain );
@@ -1314,6 +1586,14 @@ static HRESULT WINAPI xaml_reader_statics_Load( IXamlReaderStatics *iface, HSTRI
     TRACE( "iface %p, xaml %s, value %p.\n", iface, debugstr_hstring( xaml ), value );
     if (!value) return E_POINTER;
     if (!xaml) return E_INVALIDARG;
+    
+    /* WINE STUB HACK: Extract XAML text for our spoofed UI */
+    {
+        UINT32 len;
+        const WCHAR *str = WindowsGetStringRawBuffer( xaml, &len );
+        if (str) parse_wine_xaml(str);
+    }
+
     return xaml_reader_object_create( XAML_READER_OBJECT_FRAMEWORK_ELEMENT, grid_name, value );
 }
 

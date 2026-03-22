@@ -282,13 +282,28 @@ static HRESULT WINAPI desktop_window_xaml_source_native_AttachToWindow( IDesktop
 {
     struct desktop_window_xaml_source *impl = impl_from_IDesktopWindowXamlSourceNative( iface );
 
-    TRACE( "iface %p, parent_wnd %p.\n", iface, parent_wnd );
+    {
+        FILE *f = fopen("/tmp/xaml_debug.log", "a");
+        if (f) {
+            WCHAR class_name[256] = {0}, window_name[256] = {0};
+            GetClassNameW(parent_wnd, class_name, 256);
+            GetWindowTextW(parent_wnd, window_name, 256);
+            fprintf(f, "AttachToWindow parent=%p class='%ls' title='%ls'\n", parent_wnd, class_name, window_name);
+            fclose(f);
+        }
+    }
 
     if (!parent_wnd) return E_INVALIDARG;
     if (impl->window) return S_OK;
 
-    impl->window = CreateWindowExW( 0, L"Static", NULL, WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, parent_wnd, 0,
-                                    GetModuleHandleW( NULL ), NULL );
+    {
+        RECT parent_rc;
+        GetClientRect( parent_wnd, &parent_rc );
+        impl->window = CreateWindowExW( 0, L"WineXamlStubClass", NULL, WS_CHILD | WS_VISIBLE,
+                                        0, 0, parent_rc.right, parent_rc.bottom, parent_wnd, 0,
+                                        NULL, NULL );
+    }
+
     if (!impl->window) return HRESULT_FROM_WIN32( GetLastError() );
 
     return S_OK;

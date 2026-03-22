@@ -43,6 +43,39 @@ extern IActivationFactory *windows_xaml_manager_factory;
 extern IActivationFactory *desktop_window_xaml_source_factory;
 extern IActivationFactory *xaml_reader_factory;
 
+enum wine_xaml_node_type {
+    XAML_NODE_GRID,
+    XAML_NODE_STACKPANEL,
+    XAML_NODE_TEXTBLOCK,
+    XAML_NODE_RECTANGLE,
+    XAML_NODE_BORDER,
+    XAML_NODE_IMAGE,
+    XAML_NODE_VIEWBOX,
+    XAML_NODE_PATH,
+    XAML_NODE_PROGRESSBAR,
+    XAML_NODE_SWAPCHAINPANEL,
+    XAML_NODE_UNKNOWN
+};
+
+struct wine_xaml_node {
+    enum wine_xaml_node_type type;
+    WCHAR name[128];
+    WCHAR text[1024];
+    DWORD bg_color; /* 0x00BBGGRR */
+    DWORD fg_color; /* 0x00BBGGRR */
+    DWORD fill_color; /* 0x00BBGGRR */
+    int has_bg, has_fg, has_fill;
+    float width, height, margin[4];
+    double progress_value, progress_max;
+
+    struct wine_xaml_node **children;
+    int child_count;
+    int child_capacity;
+};
+
+extern struct wine_xaml_node *wine_xaml_root_node;
+extern void parse_wine_xaml(const WCHAR *xml);
+
 #define DEFINE_IINSPECTABLE_( pfx, iface_type, impl_type, impl_from, iface_mem, expr )             \
     static inline impl_type *impl_from( iface_type *iface )                                        \
     {                                                                                              \

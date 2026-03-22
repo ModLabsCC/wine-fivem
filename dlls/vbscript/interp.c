@@ -472,14 +472,12 @@ static HRESULT stack_assume_disp(exec_ctx_t *ctx, unsigned n, IDispatch **disp)
 
     if(V_VT(v) != VT_DISPATCH && (disp || V_VT(v) != VT_UNKNOWN)) {
         if(V_VT(v) != (VT_VARIANT|VT_BYREF)) {
-            FIXME("not supported type: %s\n", debugstr_variant(v));
-            return E_FAIL;
+            return MAKE_VBSERROR(VBSE_OBJECT_REQUIRED);
         }
 
         ref = V_VARIANTREF(v);
         if(V_VT(ref) != VT_DISPATCH && (disp || V_VT(ref) != VT_UNKNOWN)) {
-            FIXME("not disp %s\n", debugstr_variant(ref));
-            return E_FAIL;
+            return MAKE_VBSERROR(VBSE_OBJECT_REQUIRED);
         }
 
         V_VT(v) = V_VT(ref);
@@ -650,8 +648,11 @@ static HRESULT do_icall(exec_ctx_t *ctx, VARIANT *res, BSTR identifier, unsigned
         break;
     case REF_OBJ:
         if(arg_cnt) {
-            FIXME("arguments on object\n");
-            return E_NOTIMPL;
+            vbstack_to_dp(ctx, arg_cnt, FALSE, &dp);
+            hres = disp_call(ctx->script, ref.u.obj, DISPID_VALUE, &dp, res);
+            if(FAILED(hres))
+                return hres;
+            break;
         }
 
         if(res) {
@@ -859,10 +860,8 @@ static HRESULT assign_ident(exec_ctx_t *ctx, BSTR name, WORD flags, DISPPARAMS *
                 break;
             }
 
-            if(!(V_VT(v) & VT_ARRAY)) {
-                FIXME("array assign on type %d\n", V_VT(v));
-                return E_FAIL;
-            }
+            if(!(V_VT(v) & VT_ARRAY))
+                return DISP_E_TYPEMISMATCH;
 
             switch(V_VT(v)) {
             case VT_ARRAY|VT_BYREF|VT_VARIANT:
@@ -911,10 +910,8 @@ static HRESULT assign_ident(exec_ctx_t *ctx, BSTR name, WORD flags, DISPPARAMS *
         }else {
             VARIANT *new_var;
 
-            if(arg_cnt(dp)) {
-                FIXME("arg_cnt %d not supported\n", arg_cnt(dp));
-                return E_NOTIMPL;
-            }
+            if(arg_cnt(dp))
+                return DISP_E_TYPEMISMATCH;
 
             TRACE("creating variable %s\n", debugstr_w(name));
             hres = add_dynamic_var(ctx, name, FALSE, &new_var);
@@ -1518,9 +1515,8 @@ static HRESULT interp_newenum(exec_ctx_t *ctx)
         break;
     }
     default:
-        FIXME("Unsupported for %s\n", debugstr_variant(v.v));
         release_val(&v);
-        return E_NOTIMPL;
+        return MAKE_VBSERROR(VBSE_NOT_ENUM);
     }
 
     return S_OK;
@@ -1539,8 +1535,7 @@ static HRESULT interp_enumnext(exec_ctx_t *ctx)
     TRACE("\n");
 
     if(V_VT(stack_top(ctx, 0)) == VT_EMPTY) {
-        FIXME("uninitialized\n");
-        return E_FAIL;
+        return MAKE_VBSERROR(VBSE_NOT_ENUM);
     }
 
     assert(V_VT(stack_top(ctx, 0)) == VT_UNKNOWN);

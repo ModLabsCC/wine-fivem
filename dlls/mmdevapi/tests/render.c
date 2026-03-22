@@ -644,6 +644,7 @@ void fill_wave_formats(const WAVEFORMATEXTENSIBLE *base_fmt)
         {WAVE_FORMAT_PCM, 32, 32},
         {WAVE_FORMAT_PCM, 64, 64},
         {WAVE_FORMAT_PCM, 96, 96},
+        {WAVE_FORMAT_PCM, 100, 100},
 
         {WAVE_FORMAT_IEEE_FLOAT, 0, 0},
         {WAVE_FORMAT_IEEE_FLOAT, 1, 1},
@@ -690,7 +691,6 @@ void fill_wave_formats(const WAVEFORMATEXTENSIBLE *base_fmt)
     static const DWORD sample_rates[] =
     {
         0,
-        100,
         8000,
         11025,
         16000,
@@ -914,6 +914,7 @@ static void test_format(AUDCLNT_SHAREMODE mode, WAVEFORMATEXTENSIBLE *fmt)
             /* Correct formats should be accepted, possibly with S_FALSE if they are not compatible. */
             if (!compatible)
                 expected = S_FALSE;
+            todo_wine_if(hr != expected && fmt24on32)
             ok(hr == expected || broken(hr == S_OK || (hr == S_FALSE && channel_mismatch)) /* Some drivers are more relaxed. */,
                     "IsFormatSupported() returns %08lx, expected %08lx\n", hr, expected);
         } else {

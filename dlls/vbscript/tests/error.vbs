@@ -197,7 +197,7 @@ sub testThrow
     next
     call ok(x = 2, "x = " & x)
     call ok(y = 1, "y = " & y)
-    call todo_wine_ok(Err.Number = VB_E_OBJNOTCOLLECTION, "Err.Number = " & Err.Number)
+    call ok(Err.Number = VB_E_OBJNOTCOLLECTION, "Err.Number = " & Err.Number)
 
     Err.clear()
     y = 0
@@ -318,7 +318,7 @@ sub testForEachError()
     z = true
     call ok(y, "for each not executed")
     call ok(z, "line after next not executed")
-    call todo_wine_ok(Err.Number = VB_E_OBJNOTCOLLECTION, "Err.Number = " & Err.Number)
+    call ok(Err.Number = VB_E_OBJNOTCOLLECTION, "Err.Number = " & Err.Number)
 end sub
 
 call testForEachError()
@@ -340,7 +340,7 @@ sub testWithError()
     with throwInt(E_TESTERROR)
         x = true
         .prop = 1
-        todo_wine_ok Err.Number = 424, "Err.Number = " & Err.Number
+        ok Err.Number = 424, "Err.Number = " & Err.Number
     end with
     ok x, "with statement body not executed"
 
@@ -348,7 +348,7 @@ sub testWithError()
     x = false
     with empty
         .prop = 1
-        todo_wine_ok Err.Number = 424, "Err.Number = " & Err.Number
+        ok Err.Number = 424, "Err.Number = " & Err.Number
         x = true
     end with
     ok x, "with statement body not executed"
@@ -460,6 +460,26 @@ end sub
 
 call testVBErrorCodes
 
+sub testDivisionByZero()
+    on error resume next
+    dim x
+
+    Err.Clear()
+    x = 1 / 0
+    call ok(Err.Number = 11, "1 / 0 Err.Number = " & Err.Number)
+    call ok(Err.Description = "Division by zero", "1 / 0 Err.Description = " & Err.Description)
+
+    Err.Clear()
+    x = 1 \ 0
+    call ok(Err.Number = 11, "1 \ 0 Err.Number = " & Err.Number)
+
+    Err.Clear()
+    x = 1 Mod 0
+    call ok(Err.Number = 11, "1 Mod 0 Err.Number = " & Err.Number)
+end sub
+
+call testDivisionByZero
+
 on error resume next
 
 throwWithDesc
@@ -474,6 +494,25 @@ ok err.description = "test", "err.description = " & err.description
 ok err.helpcontext = 10, "err.helpcontext = " & err.helpcontext
 ok err.helpfile = "test.chm", "err.helpfile = " & err.helpfile
 
+on error goto 0
+
+' indexed assign to non-array variable should give type mismatch
+dim z
+z = 42
+on error resume next
+z(0) = 1
+ok err.number = 13, "err.number = " & err.number
+err.clear
+
+' Option Explicit: assigning to undeclared variable should give error 500
+undeclaredVar = 1
+todo_wine_ok err.number = 500, "err.number = " & err.number
+err.clear
+
+' Option Explicit: reading undeclared variable should give error 500
+dim unused
+unused = undeclaredVar2
+todo_wine_ok err.number = 500, "err.number = " & err.number
 on error goto 0
 
 call reportSuccess()

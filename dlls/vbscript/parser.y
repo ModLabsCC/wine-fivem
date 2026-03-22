@@ -137,7 +137,7 @@ static statement_t *link_statements(statement_t*,statement_t*);
 %token <date> tDate
 
 %type <statement> Statement SimpleStatement StatementNl StatementsNl StatementsNl_opt BodyStatements IfStatement Else_opt
-%type <statement> GlobalDimDeclaration
+%type <statement> GlobalDimDeclaration StatementsBody StatementsBody_opt
 %type <expression> Expression LiteralExpression PrimaryExpression EqualityExpression CallExpression ExpressionNl_opt
 %type <expression> ConcatExpression AdditiveExpression ModExpression IntdivExpression MultiplicativeExpression ExpExpression
 %type <expression> NotExpression UnaryExpression AndExpression OrExpression XorExpression EqvExpression SignExpression
@@ -327,12 +327,26 @@ ElseIfs
     | ElseIf ElseIfs                        { $1->next = $2; $$ = $1; }
 
 ElseIf
-    : tELSEIF Expression tTHEN StSep_opt StatementsNl_opt
+    : tELSEIF Expression tTHEN StSep StatementsNl_opt
                                             { $$ = new_elseif_decl(ctx, @$, $2, $5); }
+    | tELSEIF Expression tTHEN StatementsBody_opt
+                                            { $$ = new_elseif_decl(ctx, @$, $2, $4); }
 
 Else_opt
     : /* empty */                           { $$ = NULL; }
-    | tELSE StSep_opt StatementsNl_opt      { $$ = $3; }
+    | tELSE StSep StatementsBody_opt        { $$ = $3; }
+    | tELSE StatementsBody                  { $$ = $2; }
+
+StatementsBody_opt
+    : /* empty */                           { $$ = NULL; }
+    | SimpleStatement                       { $$ = $1; }
+    | SimpleStatement StSep StatementsBody_opt
+                                            { $1->next = $3; $$ = $1; }
+
+StatementsBody
+    : SimpleStatement                       { $$ = $1; }
+    | SimpleStatement StSep StatementsBody_opt
+                                            { $1->next = $3; $$ = $1; }
 
 CaseClausules
     : /* empty */                                                      { $$ = NULL; }
@@ -732,7 +746,7 @@ static call_expression_t *make_call_expression(parser_ctx_t *ctx, expression_t *
 {
     call_expression_t *call_expr;
 
-    if(callee_expr->type == EXPR_MEMBER)
+    if(callee_expr->type == EXPR_MEMBER || callee_expr->type == EXPR_ME)
         return new_call_expression(ctx, callee_expr, arguments);
     if(callee_expr->type != EXPR_CALL) {
         FIXME("Unhandled for expr type %u\n", callee_expr->type);
@@ -748,6 +762,7 @@ static call_expression_t *make_call_expression(parser_ctx_t *ctx, expression_t *
     if(call_expr->args->next) {
         FIXME("Invalid syntax: invalid use of parentheses for arguments\n");
         ctx->hres = E_FAIL;
+        ctx->error_loc = ctx->ptr - ctx->code;
         return NULL;
     }
 

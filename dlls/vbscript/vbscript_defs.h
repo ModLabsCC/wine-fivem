@@ -241,6 +241,7 @@
 #define VBSE_OUT_OF_MEMORY                  7
 #define VBSE_OUT_OF_BOUNDS                  9
 #define VBSE_ARRAY_LOCKED                  10
+#define VBSE_DIVISION_BY_ZERO              11
 #define VBSE_TYPE_MISMATCH                 13
 #define VBSE_FILE_NOT_FOUND                53
 #define VBSE_IO_ERROR                      57
@@ -253,6 +254,7 @@
 #define VBSE_OBJECT_VARIABLE_NOT_SET       91
 #define VBSE_ILLEGAL_NULL_USE              94
 #define VBSE_CANT_CREATE_TMP_FILE         322
+#define VBSE_OBJECT_REQUIRED              424
 #define VBSE_CANT_CREATE_OBJECT           429
 #define VBSE_OLE_NOT_SUPPORTED            430
 #define VBSE_OLE_FILE_NOT_FOUND           432

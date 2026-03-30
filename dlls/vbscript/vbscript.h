@@ -167,6 +167,7 @@ HRESULT disp_propput(script_ctx_t*,IDispatch*,DISPID,WORD,DISPPARAMS*);
 HRESULT get_disp_value(script_ctx_t*,IDispatch*,VARIANT*);
 void collect_objects(script_ctx_t*);
 HRESULT create_script_disp(script_ctx_t*,ScriptDisp**);
+HRESULT create_func_ref(script_ctx_t*,function_t*,IDispatch**);
 
 HRESULT to_int(VARIANT*,int*);
 
@@ -201,6 +202,8 @@ struct _script_ctx_t {
     DWORD safeopt;
 
     ScriptDisp *script_obj;
+
+    named_item_t *current_named_item;
 
     BuiltinDisp *global_obj;
     BuiltinDisp *err_obj;
@@ -296,6 +299,7 @@ typedef enum {
     X(val,            1, 0,           0)          \
     X(vcall,          1, ARG_UINT,    0)          \
     X(vcallv,         1, ARG_UINT,    0)          \
+    X(with,           1, 0,           0)          \
     X(xor,            1, 0,           0)
 
 typedef enum {
@@ -394,7 +398,7 @@ void release_dynamic_var(dynamic_var_t*);
 named_item_t *lookup_named_item(script_ctx_t*,const WCHAR*,unsigned);
 void release_named_item(named_item_t*);
 void clear_ei(EXCEPINFO*);
-HRESULT report_script_error(script_ctx_t*,const vbscode_t*,unsigned);
+HRESULT report_script_error(script_ctx_t*,vbscode_t*,unsigned,BOOL);
 void detach_global_objects(script_ctx_t*);
 HRESULT get_builtin_id(BuiltinDisp*,const WCHAR*,DISPID*);
 HRESULT array_access(SAFEARRAY *array, DISPPARAMS *dp, VARIANT **ret);

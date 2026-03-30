@@ -190,14 +190,20 @@ enum request_response_state
 
 #define READ_BUFFER_SIZE 8192
 
+struct read_buffer
+{
+    DWORD pos;  /* current read position in buf */
+    DWORD size; /* valid data size in buf */
+    BYTE  buf[READ_BUFFER_SIZE]; /* buffer for already read but not returned data */
+};
+
 struct data_stream;
 struct request;
 
 struct data_stream_vtbl
 {
-    DWORD (*query_data)( struct data_stream *, struct request * );
+    DWORD (*fill_buffer)( struct data_stream *, struct request *, struct read_buffer * );
     BOOL  (*end_of_data)( struct data_stream *, struct request * );
-    DWORD (*read_data)( struct data_stream *, struct request *, char *, DWORD, DWORD * );
     DWORD (*drain_data)( struct data_stream *, struct request * );
     void  (*destroy)( struct data_stream * );
 };
@@ -210,8 +216,6 @@ struct data_stream
 struct netconn_stream
 {
     struct data_stream data_stream;
-    UINT64 content_length;
-    UINT64 content_read;
 };
 
 extern const struct data_stream_vtbl netconn_stream_vtbl;
@@ -244,9 +248,7 @@ struct request
     WCHAR *status_text;
     UINT64 content_length; /* total number of bytes to be read */
     UINT64 content_read;   /* bytes read so far */
-    DWORD read_pos;       /* current read position in read_buf */
-    DWORD read_size;      /* valid data size in read_buf */
-    char  read_buf[READ_BUFFER_SIZE]; /* buffer for already read but not returned data */
+    struct read_buffer read;
     struct data_stream *data_stream;
     struct netconn_stream netconn_stream;
     struct header *headers;
@@ -434,7 +436,6 @@ void netconn_addref( struct netconn * );
 void netconn_release( struct netconn * );
 DWORD netconn_create( struct hostdata *, const struct sockaddr_storage *, int, struct netconn ** );
 void netconn_unload( void );
-ULONG netconn_query_data_available( struct netconn * );
 DWORD netconn_recv( struct netconn *, void *, size_t, int, int * );
 DWORD netconn_resolve( const WCHAR *, INTERNET_PORT, DWORD, struct sockaddr_storage *, int );
 DWORD netconn_secure_connect( struct netconn *, WCHAR *, DWORD, CredHandle *, BOOL );

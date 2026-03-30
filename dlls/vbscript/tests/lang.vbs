@@ -62,6 +62,20 @@ Call ok(&hfffe& = 65534, "&hfffe& <> -2")
 Call ok(&hffffffff& = -1, "&hffffffff& <> -1")
 Call ok((&h01or&h02)=3,"&h01or&h02 <> 3")
 
+' Hex literals with excess leading zeros
+Call ok(&H000000031 = 49, "&H000000031 <> 49")
+Call ok(&H0000000000000031 = 49, "&H0000000000000031 <> 49")
+Call ok(&H00000000000000FF = 255, "&H00000000000000FF <> 255")
+Call ok(&H0FFFFFFFF = -1, "&H0FFFFFFFF <> -1")
+Call ok(&H007FFFFFFF = 2147483647, "&H007FFFFFFF <> 2147483647")
+Call ok(&H000000031& = 49, "&H000000031& <> 49")
+Call ok(getVT(&H00000000000000FF) = "VT_I2", "getVT(&H00000000000000FF) is not VT_I2")
+Call ok(getVT(&H007FFFFFFF) = "VT_I4", "getVT(&H007FFFFFFF) is not VT_I4")
+Call ok(&h0 = 0, "&h0 <> 0")
+Call ok(&h0& = 0, "&h0& <> 0")
+Call ok(&h00 = 0, "&h00 <> 0")
+Call ok(&h000000000 = 0, "&h000000000 <> 0")
+
 ' Test concat when no space and var begins with h
 hi = "y"
 x = "x" &hi
@@ -91,6 +105,18 @@ Call ok("" = true = false, """"" = true = false is false")
 Call ok(not(false = true = ""), "false = true = """" is true")
 Call ok(not (false = false <> false = false), "false = false <> false = false is true")
 Call ok(not ("" <> false = false), """"" <> false = false is true")
+
+Call ok(true <> Not true, "true <> Not true should be true")
+Call ok(false <> Not false, "false <> Not false should be true")
+Call ok(true = Not false, "true = Not false should be true")
+Call ok(Not false = true, "Not false = true should be true")
+Call ok(Not true <> true, "Not true <> true should be true")
+Call ok(Not true = false, "Not true = false should be true")
+Call ok(Not 1 > 2, "Not 1 > 2 should be true")
+Call ok(1 <> Not 0 = 0, "1 <> Not 0 = 0 should be true")
+Call ok(0 = Not 1 = 1, "0 = Not 1 = 1 should be true")
+Call ok(1 > Not 5 > 3, "1 > Not 5 > 3 should be true")
+Call ok(Not false And false = false, "Not false And false should be false")
 
 Call ok(getVT(false) = "VT_BOOL", "getVT(false) is not VT_BOOL")
 Call ok(getVT(true) = "VT_BOOL", "getVT(true) is not VT_BOOL")
@@ -246,6 +272,21 @@ x _
     = 3
 
 x = 3
+
+Class ChainedCallTarget
+    Public Function Ret()
+        Set Ret = Me
+    End Function
+End Class
+
+Dim chainObj
+Set chainObj = New ChainedCallTarget
+chainObj.Ret().Ret()
+chainObj.Ret() _
+.Ret()
+chainObj _
+.Ret() _
+.Ret()
 
 if true then y = true : x = y
 ok x, "x is false"
@@ -1666,6 +1707,25 @@ ok arr2(1,2) = 2, "arr2(1,2) = " & arr2(1,2)
 x = Array(Array(3))
 call ok(x(0)(0) = 3, "x(0)(0) = " & x(0)(0))
 
+Class ArrayReturnContainer
+    Public Default Property Get Item(key)
+        If key = "Key" Then
+            Item = Array("Value1", Array("SubValue1", "SubValue2"))
+        End If
+    End Property
+End Class
+
+Dim containerObj
+Set containerObj = New ArrayReturnContainer
+call ok(containerObj.Item("Key")(0) = "Value1", "containerObj.Item(Key)(0) = " & containerObj.Item("Key")(0))
+call ok(containerObj.Item("Key")(1)(0) = "SubValue1", "containerObj.Item(Key)(1)(0) = " & containerObj.Item("Key")(1)(0))
+call ok(containerObj.Item("Key")(1)(1) = "SubValue2", "containerObj.Item(Key)(1)(1) = " & containerObj.Item("Key")(1)(1))
+call ok(containerObj("Key")(0) = "Value1", "containerObj(Key)(0) = " & containerObj("Key")(0))
+call ok(containerObj("Key")(1)(0) = "SubValue1", "containerObj(Key)(1)(0) = " & containerObj("Key")(1)(0))
+
+call ok(Split("1;2", ";")(0) = "1", "Split(""1;2"", "";"")(0) = " & Split("1;2", ";")(0))
+call ok(Split("1;2", ";")(1) = "2", "Split(""1;2"", "";"")(1) = " & Split("1;2", ";")(1))
+
 function seta0(arr)
     arr(0) = 2
     seta0 = 1
@@ -1897,6 +1957,65 @@ end sub
 call TestReDimPreserveByRef(rx)
 ok ubound(rx) = 7, "ubound(rx) = " & ubound(rx)
 ok rx(3) = 2, "rx(3) = " & rx(3)
+
+' ReDim on an uninitialized dynamic array (Dim arr() has a NULL SAFEARRAY pointer)
+dim dynarr()
+redim dynarr(3)
+ok ubound(dynarr) = 3, "ubound(dynarr) = " & ubound(dynarr)
+dynarr(0) = "a"
+dynarr(3) = "b"
+ok dynarr(0) = "a", "dynarr(0) = " & dynarr(0)
+ok dynarr(3) = "b", "dynarr(3) = " & dynarr(3)
+redim dynarr(5)
+ok ubound(dynarr) = 5, "ubound(dynarr) = " & ubound(dynarr)
+ok dynarr(0) = empty, "dynarr(0) after redim = " & dynarr(0)
+
+' ReDim Preserve on an uninitialized dynamic array should also work and retain data
+dim dynarr2()
+redim preserve dynarr2(3)
+ok ubound(dynarr2) = 3, "ubound(dynarr2) = " & ubound(dynarr2)
+dynarr2(0) = "x"
+redim preserve dynarr2(5)
+ok ubound(dynarr2) = 5, "ubound(dynarr2) = " & ubound(dynarr2)
+ok dynarr2(0) = "x", "dynarr2(0) after redim preserve = " & dynarr2(0)
+
+' Array dimension mismatch: should give error 9 (Subscript out of range)
+dim dimArr2d(3, 3)
+dimArr2d(0, 0) = "hello"
+on error resume next
+
+' 2D array accessed with 1 index
+err.clear
+y = dimArr2d(0)
+ok err.number = 9, "2D array 1 index: err.number = " & err.number
+
+' 1D array accessed with 2 indices
+dim dimArr1d(3)
+err.clear
+y = dimArr1d(0, 0)
+ok err.number = 9, "1D array 2 indices: err.number = " & err.number
+
+' 2D array accessed with 3 indices
+err.clear
+y = dimArr2d(0, 0, 0)
+ok err.number = 9, "2D array 3 indices: err.number = " & err.number
+
+' Assign to 2D array with 1 index
+err.clear
+dimArr2d(0) = "test"
+ok err.number = 9, "assign 2D array 1 index: err.number = " & err.number
+
+' Assign to 1D array with 2 indices
+err.clear
+dimArr1d(0, 0) = "test"
+ok err.number = 9, "assign 1D array 2 indices: err.number = " & err.number
+
+' Uninitialized dynamic array access
+dim dimDynArr()
+err.clear
+y = dimDynArr(0)
+ok err.number = 9, "uninitialized dynamic array access: err.number = " & err.number
+on error goto 0
 
 Class ArrClass
     Dim classarr(3)
@@ -2187,6 +2306,7 @@ Class TestPropParam
     Public oDict
     Public gotNothing
     Public m_obj
+    Public m_objType
 
     Public Property Set bar(obj)
         Set m_obj = obj
@@ -2205,6 +2325,14 @@ Class TestPropParam
     Public Property Let ten(a,b,c,d,e,f,g,h,i,j)
         oDict = a & b & c & d & e & f & g & h & i & j
     End Property
+    Public Property Let objProp(aInput)
+        m_objType = getVT(aInput)
+        If IsObject(aInput) Then
+            Set m_obj = aInput
+        Else
+            m_obj = aInput
+        End If
+    End Property
 End Class
 
 Set x = new TestPropParam
@@ -2220,6 +2348,24 @@ Set x.foo("123") = Nothing
 call ok(x.oDict = "123","x.oDict = " & x.oDict & " expected 123")
 call ok(x.gotNothing=True,"x.gotNothing = " & x.gotNothing  & " expected true")
 
+' Property Let receives VT_DISPATCH argument as-is (does not extract default value)
+Set y = New EndTestClassWithProperty
+y.x = 42
+x.objProp = y
+call ok(x.m_objType = "VT_DISPATCH*", "Property Let aInput type: " & x.m_objType & " expected VT_DISPATCH*")
+call ok(x.m_obj = 42, "Property Let with object argument failed, m_obj = " & x.m_obj)
+
+' Property Let receives object without default property as VT_DISPATCH
+Set z = New EmptyClass
+x.objProp = z
+call ok(x.m_objType = "VT_DISPATCH*", "Property Let no-default aInput type: " & x.m_objType & " expected VT_DISPATCH*")
+
+' Set with only Property Let defined should fail (no fallback to Let)
+On Error Resume Next
+Set x.objProp = y
+call ok(Err.Number = 438, "Set Property Let only: Err.Number = " & Err.Number & " expected 438")
+On Error GoTo 0
+
 set x = new TestPropSyntax
 set x.prop = new TestPropSyntax
 set x.prop.prop = new TestPropSyntax
@@ -2233,7 +2379,7 @@ set x.getprop.getprop().prop = obj
 call ok(x.getprop.getprop().prop is obj, "x.getprop.getprop().prop is not obj (emptyclass)")
 
 ok getVT(x) = "VT_DISPATCH*", "getVT(x) = " & getVT(x)
-todo_wine_ok getVT(x()) = "VT_BSTR", "getVT(x()) = " & getVT(x())
+ok getVT(x()) = "VT_BSTR", "getVT(x()) = " & getVT(x())
 
 Class TestClassVariablesMulti
     Public pub1, pub2
@@ -2380,5 +2526,136 @@ arr (0) = 2 xor -2
 ' Test calling a named item object with arguments (DISPID_VALUE)
 Call ok(indexedObj(3) = 6, "indexedObj(3) = " & indexedObj(3))
 Call ok(indexedObj(0) = 0, "indexedObj(0) = " & indexedObj(0))
+
+' GetRef tests
+Function GetRefTestFunc()
+    GetRefTestFunc = 42
+End Function
+
+Dim getRefRef
+Set getRefRef = GetRef("GetRefTestFunc")
+Call ok(IsObject(getRefRef), "IsObject(GetRef result) should be true")
+Call ok(getRefRef() = 42, "GetRef result call returned " & getRefRef())
+
+' GetRef with parameters
+Function GetRefAddFunc(a, b)
+    GetRefAddFunc = a + b
+End Function
+
+Set getRefRef = GetRef("GetRefAddFunc")
+Call ok(getRefRef(3, 4) = 7, "GetRef add call returned " & getRefRef(3, 4))
+
+' GetRef with a Sub
+Dim getRefSubCalled
+getRefSubCalled = False
+Sub GetRefTestSub()
+    getRefSubCalled = True
+End Sub
+
+Set getRefRef = GetRef("GetRefTestSub")
+Call getRefRef()
+Call ok(getRefSubCalled, "GetRef sub was not called")
+
+' GetRef with Sub that has parameters
+Dim getRefSubResult
+Sub GetRefTestSubArgs(a, b)
+    getRefSubResult = a + b
+End Sub
+
+Set getRefRef = GetRef("GetRefTestSubArgs")
+Call getRefRef(10, 20)
+Call ok(getRefSubResult = 30, "GetRef sub with args returned " & getRefSubResult)
+
+' GetRef case insensitivity
+Function getRefCaseFunc()
+    getRefCaseFunc = "hello"
+End Function
+
+Set getRefRef = GetRef("GETREFCASEFUNC")
+Call ok(getRefRef() = "hello", "GetRef case insensitive returned " & getRefRef())
+
+' GetRef default value (calling without parens triggers default property)
+Set getRefRef = GetRef("GetRefTestFunc")
+Dim getRefResult
+getRefResult = getRefRef
+Call ok(getRefResult = 42, "GetRef default value returned " & getRefResult)
+Call ok(getVT(getRefResult) = "VT_I2*", "GetRef default value type is " & getVT(getRefResult))
+
+' GetRef can be passed to another function
+Function GetRefCallIt(fn)
+    GetRefCallIt = fn()
+End Function
+
+Set getRefRef = GetRef("GetRefTestFunc")
+Call ok(GetRefCallIt(getRefRef) = 42, "GetRef passed to function returned " & GetRefCallIt(getRefRef))
+
+' GetRef error cases
+On Error Resume Next
+
+Err.Clear
+Set getRefRef = GetRef("NonExistentFunc")
+Call ok(Err.Number = 5, "GetRef non-existent function error is " & Err.Number)
+
+Err.Clear
+Set getRefRef = GetRef("")
+Call ok(Err.Number = 5, "GetRef empty string error is " & Err.Number)
+
+Err.Clear
+Set getRefRef = GetRef(123)
+Call ok(Err.Number = 13, "GetRef numeric arg error is " & Err.Number)
+
+Err.Clear
+Set getRefRef = GetRef(Null)
+Call ok(Err.Number = 13, "GetRef Null arg error is " & Err.Number)
+
+Err.Clear
+Set getRefRef = GetRef(Empty)
+Call ok(Err.Number = 13, "GetRef Empty arg error is " & Err.Number)
+
+Err.Clear
+Set getRefRef = GetRef(vbNullString)
+Call ok(Err.Number = 5, "GetRef vbNullString error is " & Err.Number)
+
+On Error Goto 0
+
+' Test calling a dispatch variable as statement (invokes default property)
+funcCalled = ""
+Set obj = New DefaultSubTest1
+obj 3
+Call ok(funcCalled = "init3", "dispatch var as statement: funcCalled = " & funcCalled)
+
+' Test calling a dispatch variable (default Function, no args) as statement
+funcCalled = ""
+Set obj = New DefaultSubTest2
+obj
+Call ok(funcCalled = "init", "dispatch var (default func) as statement: funcCalled = " & funcCalled)
+
+' Test calling non-dispatch variables as statement gives type mismatch (error 13)
+On Error Resume Next
+
+dim intCallVar
+intCallVar = 42
+Err.Clear
+intCallVar
+Call ok(Err.Number = 13, "int var as statement: err = " & Err.Number)
+
+dim strCallVar
+strCallVar = "hello"
+Err.Clear
+strCallVar
+Call ok(Err.Number = 13, "string var as statement: err = " & Err.Number)
+
+dim emptyCallVar
+Err.Clear
+emptyCallVar
+Call ok(Err.Number = 13, "empty var as statement: err = " & Err.Number)
+
+dim boolCallVar
+boolCallVar = True
+Err.Clear
+boolCallVar
+Call ok(Err.Number = 13, "bool var as statement: err = " & Err.Number)
+
+On Error GoTo 0
 
 reportSuccess()

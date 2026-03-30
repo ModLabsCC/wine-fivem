@@ -47,21 +47,40 @@ WINE_DEFAULT_DEBUG_CHANNEL(winhttp);
 #define ACTUAL_DEFAULT_RECEIVE_RESPONSE_TIMEOUT 21000
 
 /* return the size of data available to be read immediately */
-static DWORD query_data_stream( struct request *request )
+static DWORD query_data_stream( struct request *request, DWORD *size )
 {
-    return request->data_stream->vtbl->query_data( request->data_stream, request );
+    DWORD ret = ERROR_SUCCESS;
+
+    if (!request->read.size)
+        ret = request->data_stream->vtbl->fill_buffer( request->data_stream, request, &request->read );
+
+    *size = request->read.size;
+    return ret;
 }
 
 static BOOL end_of_data_stream( struct request *request )
 {
-    return !request->read_size && request->data_stream->vtbl->end_of_data( request->data_stream, request );
+    return !request->read.size && request->data_stream->vtbl->end_of_data( request->data_stream, request );
 }
 
 static DWORD read_data_stream( struct request *request, char *buf, DWORD to_read, DWORD *read )
 {
-    DWORD ret = request->data_stream->vtbl->read_data( request->data_stream, request, buf, to_read, read );
-    if (ret) *read = 0;
-    request->content_read += *read;
+    DWORD ret = ERROR_SUCCESS, size = 0;
+
+    if (request->read.size < to_read)
+        ret = request->data_stream->vtbl->fill_buffer( request->data_stream, request, &request->read );
+    if (ret) return ret;
+
+    if (request->read.size)
+    {
+        size = min( to_read, request->read.size );
+        memcpy( buf, request->read.buf + request->read.pos, size );
+        request->read.size -= size;
+        request->read.pos += size;
+        request->content_read += size;
+    }
+
+    *read = size;
     return ret;
 }
 
@@ -79,64 +98,50 @@ static void reset_data_stream( struct request *request )
 {
     destroy_data_stream( request->data_stream );
     request->data_stream = &request->netconn_stream.data_stream;
-    request->read_pos = request->read_size = request->netconn_stream.content_read = 0;
-}
-
-static DWORD netconn_query_data( struct data_stream *stream, struct request *request )
-{
-    return request->read_size + netconn_query_data_available( request->netconn );
+    request->read.pos = request->read.size = 0;
 }
 
 static BOOL netconn_end_of_data( struct data_stream *stream, struct request *request )
 {
-    struct netconn_stream *netconn_stream = (struct netconn_stream *)stream;
-    return netconn_stream->content_read == netconn_stream->content_length || !netconn_is_valid( request->netconn );
+    return request->content_read == request->content_length || !netconn_is_valid( request->netconn );
 }
 
-static DWORD netconn_read_data( struct data_stream *stream, struct request *request, char *buf, DWORD to_read, DWORD *read )
+static DWORD netconn_fill_buffer( struct data_stream *stream, struct request *request, struct read_buffer *buf )
 {
-    struct netconn_stream *netconn_stream = (struct netconn_stream *)stream;
-    DWORD size = 0, ret = ERROR_SUCCESS;
-    int received = 0;
+    DWORD to_read, ret = ERROR_SUCCESS;
+    int received;
 
-    to_read = min( to_read, netconn_stream->content_length - netconn_stream->content_read );
+    if (netconn_end_of_data( stream, request )) return ERROR_SUCCESS;
 
-    if (request->read_size)
+    if (buf->pos)
     {
-        size = min( to_read, request->read_size );
-        memcpy( buf, request->read_buf + request->read_pos, size );
-        request->read_size -= size;
-        request->read_pos += size;
-        to_read -= size;
-        netconn_stream->content_read += size;
+        if (buf->size) memmove( buf->buf, buf->buf + buf->pos, buf->size );
+        buf->pos = 0;
     }
 
-    if (to_read && netconn_is_valid( request->netconn ))
+    to_read = sizeof(buf->buf) - buf->size;
+    to_read = min( to_read, request->content_length - request->content_read );
+
+    if (to_read > buf->size && netconn_is_valid( request->netconn ))
     {
-        if (!(ret = netconn_recv( request->netconn, buf, to_read, 0, &received )))
+        if (!(ret = netconn_recv( request->netconn, buf->buf + buf->size, to_read, 0, &received )))
         {
-            if (!received) netconn_stream->content_length = netconn_stream->content_read;
-            netconn_stream->content_read += received;
+            if (!received) request->content_length = request->content_read;
+            buf->size += received;
         }
     }
-
-    *read = size + received;
     return ret;
 }
 
 static DWORD netconn_drain_data( struct data_stream *stream, struct request *request )
 {
-    struct netconn_stream *netconn_stream = (struct netconn_stream *)stream;
-
-    while (netconn_stream->content_read < netconn_stream->content_length)
+    for (;;)
     {
-        DWORD ret, to_read, read;
-        char buf[1024];
-
-        to_read = min( sizeof(buf), netconn_stream->content_length - netconn_stream->content_read );
-        if ((ret = netconn_read_data( stream, request, buf, to_read, &read ))) return ret;
-        if (!read) return WSAECONNABORTED;
-        netconn_stream->content_read += read;
+        DWORD ret;
+        if ((ret = netconn_fill_buffer( stream, request, &request->read ))) return ret;
+        if (!request->read.size) break;
+        request->content_read += request->read.size;
+        request->read.size = request->read.pos = 0;
     }
     return ERROR_SUCCESS;
 }
@@ -147,9 +152,8 @@ static void netconn_destroy( struct data_stream *stream )
 
 const struct data_stream_vtbl netconn_stream_vtbl =
 {
-    netconn_query_data,
+    netconn_fill_buffer,
     netconn_end_of_data,
-    netconn_read_data,
     netconn_drain_data,
     netconn_destroy
 };
@@ -157,9 +161,7 @@ const struct data_stream_vtbl netconn_stream_vtbl =
 struct chunked_stream
 {
     struct data_stream data_stream;
-    char  buf[READ_BUFFER_SIZE];
-    DWORD buf_size;
-    DWORD buf_pos;
+    struct read_buffer buf;
     DWORD chunk_size;
     enum
     {
@@ -172,14 +174,6 @@ struct chunked_stream
         CHUNKED_STREAM_STATE_ERROR
     } state;
 };
-
-static DWORD chunked_query_data( struct data_stream *stream, struct request *request )
-{
-    struct chunked_stream *chunked_stream = (struct chunked_stream *)stream;
-
-    if (chunked_stream->state != CHUNKED_STREAM_STATE_READING_CHUNK ) return 0;
-    return min( chunked_stream->chunk_size, chunked_stream->buf_size - chunked_stream->buf_pos );
-}
 
 static BOOL chunked_end_of_data( struct data_stream *stream, struct request *request )
 {
@@ -198,25 +192,34 @@ static BOOL chunked_end_of_data( struct data_stream *stream, struct request *req
 
 static char next_chunked_data_char( struct chunked_stream *stream )
 {
-    assert( stream->buf_size );
-    stream->buf_size--;
-    return stream->buf[stream->buf_pos++];
+    assert( stream->buf.size );
+    stream->buf.size--;
+    return stream->buf.buf[stream->buf.pos++];
 }
 
-static DWORD chunked_read_data( struct data_stream *stream, struct request *request, char *buf, DWORD to_read, DWORD *read )
+static DWORD chunked_fill_buffer( struct data_stream *stream, struct request *request, struct read_buffer *buf )
 {
     struct chunked_stream *chunked_stream = (struct chunked_stream *)stream;
-    DWORD ret_read = 0, ret = ERROR_SUCCESS;
+    DWORD to_read, offset = 0, ret = ERROR_SUCCESS;
     BOOL continue_read = TRUE;
     int read_bytes;
     char ch;
+
+    if (chunked_end_of_data( stream, request )) return ERROR_SUCCESS;
+
+    if (buf->pos)
+    {
+        if (buf->size) memmove( buf->buf, buf->buf + buf->pos, buf->size );
+        buf->pos = 0;
+    }
+    to_read = sizeof(buf->buf) - buf->size;
 
     do
     {
         TRACE( "state %d\n", chunked_stream->state );
 
         /* ensure that we have data in the buffer for states that need it */
-        if (!chunked_stream->buf_size)
+        if (!chunked_stream->buf.size)
         {
             switch (chunked_stream->state)
             {
@@ -224,10 +227,11 @@ static DWORD chunked_read_data( struct data_stream *stream, struct request *requ
             case CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_SIZE:
             case CHUNKED_STREAM_STATE_READING_CHUNK_SIZE:
             case CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_DATA:
-                chunked_stream->buf_pos = 0;
-                ret = netconn_recv( request->netconn, chunked_stream->buf, sizeof(chunked_stream->buf), 0, &read_bytes );
+                chunked_stream->buf.pos = 0;
+                ret = netconn_recv( request->netconn, chunked_stream->buf.buf, sizeof(chunked_stream->buf.buf), 0,
+                                    &read_bytes );
                 if (ret == ERROR_SUCCESS)
-                    chunked_stream->buf_size += read_bytes;
+                    chunked_stream->buf.size += read_bytes;
                 else
                     chunked_stream->state = CHUNKED_STREAM_STATE_ERROR;
                 break;
@@ -247,8 +251,8 @@ static DWORD chunked_read_data( struct data_stream *stream, struct request *requ
             else if (ch == ';' || ch == '\r' || ch == '\n')
             {
                 TRACE( "reading %lu byte chunk\n", chunked_stream->chunk_size );
-                chunked_stream->buf_size++;
-                chunked_stream->buf_pos--;
+                chunked_stream->buf.size++;
+                chunked_stream->buf.pos--;
                 if (request->content_length == ~0) request->content_length = chunked_stream->chunk_size;
                 else request->content_length += chunked_stream->chunk_size;
                 chunked_stream->state = CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_SIZE;
@@ -276,17 +280,17 @@ static DWORD chunked_read_data( struct data_stream *stream, struct request *requ
             }
             read_bytes = min( to_read, chunked_stream->chunk_size );
 
-            if (chunked_stream->buf_size)
+            if (chunked_stream->buf.size)
             {
-                if (read_bytes > chunked_stream->buf_size) read_bytes = chunked_stream->buf_size;
+                if (read_bytes > chunked_stream->buf.size) read_bytes = chunked_stream->buf.size;
 
-                memcpy( buf + ret_read, chunked_stream->buf + chunked_stream->buf_pos, read_bytes );
-                chunked_stream->buf_pos += read_bytes;
-                chunked_stream->buf_size -= read_bytes;
+                memcpy( buf->buf + offset, chunked_stream->buf.buf + chunked_stream->buf.pos, read_bytes );
+                chunked_stream->buf.pos += read_bytes;
+                chunked_stream->buf.size -= read_bytes;
             }
             else
             {
-                ret = netconn_recv( request->netconn, buf + ret_read, read_bytes, 0, (int *)&read_bytes );
+                ret = netconn_recv( request->netconn, buf->buf + offset, read_bytes, 0, (int *)&read_bytes );
                 if (ret != ERROR_SUCCESS)
                 {
                     continue_read = FALSE;
@@ -300,8 +304,9 @@ static DWORD chunked_read_data( struct data_stream *stream, struct request *requ
             }
 
             chunked_stream->chunk_size -= read_bytes;
+            buf->size += read_bytes;
             to_read -= read_bytes;
-            ret_read += read_bytes;
+            offset += read_bytes;
             if (!chunked_stream->chunk_size) chunked_stream->state = CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_DATA;
             break;
 
@@ -324,26 +329,19 @@ static DWORD chunked_read_data( struct data_stream *stream, struct request *requ
         }
     } while (continue_read);
 
-    if (ret_read) ret = ERROR_SUCCESS;
-    if (ret != ERROR_SUCCESS) return ret;
-
-    *read = ret_read;
-    return ERROR_SUCCESS;
+    return ret;
 }
 
 static DWORD chunked_drain_data( struct data_stream *stream, struct request *request )
 {
-    struct chunked_stream *chunked_stream = (struct chunked_stream *)stream;
-    char buf[1024];
-    DWORD size, ret;
-
-    while (chunked_stream->state != CHUNKED_STREAM_STATE_END_OF_STREAM &&
-           chunked_stream->state != CHUNKED_STREAM_STATE_ERROR)
+    for (;;)
     {
-        if ((ret = chunked_read_data( stream, request, buf, sizeof(buf), &size ))) return ret;
+        DWORD ret;
+        if ((ret = chunked_fill_buffer( stream, request, &request->read ))) return ret;
+        if (!request->read.size) break;
+        request->content_read += request->read.size;
+        request->read.size = request->read.pos = 0;
     }
-
-    if (chunked_stream->state != CHUNKED_STREAM_STATE_END_OF_STREAM) return ERROR_NO_DATA;
     return ERROR_SUCCESS;
 }
 
@@ -355,9 +353,8 @@ static void chunked_destroy( struct data_stream *stream )
 
 const struct data_stream_vtbl chunked_stream_vtbl =
 {
-    chunked_query_data,
+    chunked_fill_buffer,
     chunked_end_of_data,
-    chunked_read_data,
     chunked_drain_data,
     chunked_destroy
 };
@@ -365,68 +362,66 @@ const struct data_stream_vtbl chunked_stream_vtbl =
 struct gzip_stream
 {
     struct data_stream data_stream;
-    struct data_stream *parent_stream;
+    struct data_stream *parent;
     z_stream zstream;
-    BYTE buf[READ_BUFFER_SIZE];
-    DWORD buf_size;
-    DWORD buf_pos;
+    struct read_buffer buf;
     BOOL end_of_data;
 };
-
-static DWORD gzip_query_data( struct data_stream *stream, struct request *request )
-{
-    struct gzip_stream *gzip_stream = (struct gzip_stream *)stream;
-    return gzip_stream->buf_size;
-}
 
 static BOOL gzip_end_of_data( struct data_stream *stream, struct request *request )
 {
     struct gzip_stream *gzip_stream = (struct gzip_stream *)stream;
     return gzip_stream->end_of_data ||
-           (!gzip_stream->buf_size && gzip_stream->parent_stream->vtbl->end_of_data( gzip_stream->parent_stream, request ));
+           (!gzip_stream->buf.size && gzip_stream->parent->vtbl->end_of_data( gzip_stream->parent, request ));
 }
 
-static DWORD gzip_read( struct data_stream *stream, struct request *request, char *buf, DWORD to_read, DWORD *read )
+static DWORD gzip_fill_buffer( struct data_stream *stream, struct request *request, struct read_buffer *buf )
 {
     struct gzip_stream *gzip_stream = (struct gzip_stream *)stream;
     z_stream *zstream = &gzip_stream->zstream;
-    DWORD size, ret_read = 0;
+    DWORD size, to_read, offset = 0, ret = ERROR_SUCCESS;
     int zres;
-    DWORD ret = ERROR_SUCCESS;
+
+    if (gzip_end_of_data( stream, request )) return ERROR_SUCCESS;
+
+    if (buf->pos)
+    {
+        if (buf->size) memmove( buf->buf, buf->buf + buf->pos, buf->size );
+        buf->pos = 0;
+    }
+    to_read = sizeof(buf->buf) - buf->size;
 
     while (to_read && !gzip_stream->end_of_data)
     {
-        if (!gzip_stream->buf_size)
+        if (!gzip_stream->buf.size)
         {
-            if (gzip_stream->buf_pos)
+            if (gzip_stream->buf.pos)
             {
-                if (gzip_stream->buf_size)
-                    memmove( gzip_stream->buf, gzip_stream->buf + gzip_stream->buf_pos, gzip_stream->buf_size );
-                gzip_stream->buf_pos = 0;
+                if (gzip_stream->buf.size)
+                    memmove( gzip_stream->buf.buf, gzip_stream->buf.buf + gzip_stream->buf.pos, gzip_stream->buf.size );
+                gzip_stream->buf.pos = 0;
             }
-            ret = gzip_stream->parent_stream->vtbl->read_data( gzip_stream->parent_stream, request,
-                                                               (char *)gzip_stream->buf + gzip_stream->buf_size,
-                                                               sizeof(gzip_stream->buf) - gzip_stream->buf_size, &size );
-            if (ret) break;
-            gzip_stream->buf_size += size;
-            if (!size)
+            if ((ret = gzip_stream->parent->vtbl->fill_buffer( gzip_stream->parent, request, &gzip_stream->buf )))
+                return ret;
+            if (!gzip_stream->buf.size)
             {
                 WARN( "unexpected end of data\n" );
                 gzip_stream->end_of_data = TRUE;
-                break;
+                return ERROR_NO_DATA;
             }
         }
 
-        zstream->next_in = gzip_stream->buf + gzip_stream->buf_pos;
-        zstream->avail_in = gzip_stream->buf_size;
-        zstream->next_out = (Bytef *)buf + ret_read;
+        zstream->next_in = gzip_stream->buf.buf + gzip_stream->buf.pos;
+        zstream->avail_in = gzip_stream->buf.size;
+        zstream->next_out = (Bytef *)buf->buf + offset;
         zstream->avail_out = to_read;
         zres = inflate( &gzip_stream->zstream, 0 );
         size = to_read - zstream->avail_out;
+        buf->size += size;
         to_read -= size;
-        ret_read += size;
-        gzip_stream->buf_size -= zstream->next_in - (gzip_stream->buf + gzip_stream->buf_pos);
-        gzip_stream->buf_pos = zstream->next_in - gzip_stream->buf;
+        offset += size;
+        gzip_stream->buf.size -= zstream->next_in - (gzip_stream->buf.buf + gzip_stream->buf.pos);
+        gzip_stream->buf.pos = zstream->next_in - gzip_stream->buf.buf;
         if (zres == Z_STREAM_END)
         {
             TRACE( "end of data\n" );
@@ -436,36 +431,33 @@ static DWORD gzip_read( struct data_stream *stream, struct request *request, cha
         else if (zres != Z_OK)
         {
             WARN( "inflate failed %d: %s\n", zres, debugstr_a(zstream->msg) );
-            if (!ret_read) ret = ERROR_NO_DATA;
+            if (!offset) ret = ERROR_NO_DATA;
             break;
         }
     }
 
-    if (ret_read) ret = ERROR_SUCCESS;
-    *read = ret_read;
     return ret;
 }
 
-static DWORD gzip_drain_content( struct data_stream *stream, struct request *request )
+static DWORD gzip_drain_data( struct data_stream *stream, struct request *request )
 {
     struct gzip_stream *gzip_stream = (struct gzip_stream *)stream;
-    return gzip_stream->parent_stream->vtbl->drain_data( gzip_stream->parent_stream, request );
+    return gzip_stream->parent->vtbl->drain_data( gzip_stream->parent, request );
 }
 
 static void gzip_destroy( struct data_stream *stream )
 {
     struct gzip_stream *gzip_stream = (struct gzip_stream *)stream;
-    destroy_data_stream( gzip_stream->parent_stream );
+    destroy_data_stream( gzip_stream->parent );
     if (!gzip_stream->end_of_data) inflateEnd( &gzip_stream->zstream );
     free( gzip_stream );
 }
 
 static const struct data_stream_vtbl gzip_stream_vtbl =
 {
-    gzip_query_data,
+    gzip_fill_buffer,
     gzip_end_of_data,
-    gzip_read,
-    gzip_drain_content,
+    gzip_drain_data,
     gzip_destroy
 };
 
@@ -498,14 +490,14 @@ static DWORD init_gzip_stream( struct request *request, BOOL is_gzip )
         return ERROR_OUTOFMEMORY;
     }
 
-    if (request->read_size)
+    if (request->read.size)
     {
-        memcpy( gzip_stream->buf, request->read_buf + request->read_pos, request->read_size );
-        gzip_stream->buf_size = request->read_size;
-        request->read_pos = request->read_size = 0;
+        memcpy( gzip_stream->buf.buf, request->read.buf + request->read.pos, request->read.size );
+        gzip_stream->buf.size = request->read.size;
+        request->read.pos = request->read.size = 0;
     }
 
-    gzip_stream->parent_stream = request->data_stream;
+    gzip_stream->parent = request->data_stream;
     request->data_stream = &gzip_stream->data_stream;
     return ERROR_SUCCESS;
 }
@@ -2277,38 +2269,6 @@ static void finished_reading( struct request *request )
     request->netconn = NULL;
 }
 
-/* read some more data into the read buffer */
-static DWORD read_more_data( struct request *request, int max_len, BOOL notify )
-{
-    int len;
-    DWORD ret;
-
-    if (request->read_pos)
-    {
-        if (request->read_size) memmove( request->read_buf, request->read_buf + request->read_pos, request->read_size );
-        request->read_pos = 0;
-    }
-    if (max_len == -1) max_len = sizeof(request->read_buf);
-
-    if (notify) send_callback( &request->hdr, WINHTTP_CALLBACK_STATUS_RECEIVING_RESPONSE, NULL, 0 );
-
-    ret = netconn_recv( request->netconn, request->read_buf + request->read_size, max_len - request->read_size, 0, &len );
-
-    if (notify) send_callback( &request->hdr, WINHTTP_CALLBACK_STATUS_RESPONSE_RECEIVED, &len, sizeof(len) );
-
-    request->read_reply_len += len;
-    request->read_size += len;
-    return ret;
-}
-
-static DWORD refill_buffer( struct request *request, BOOL notify )
-{
-    DWORD ret;
-    if ((ret = read_more_data( request, -1, notify ))) return ret;
-    if (!request->read_size) request->content_length = request->content_read = 0;
-    return ERROR_SUCCESS;
-}
-
 static DWORD read_data( struct request *request, void *buffer, DWORD size, DWORD *read, BOOL async )
 {
     DWORD bytes_read = 0, ret;
@@ -2862,12 +2822,9 @@ static DWORD set_content_length( struct request *request, DWORD status )
     else
     {
         if (query_headers( request, WINHTTP_QUERY_CONTENT_LENGTH, NULL, buf, &buflen, NULL ))
-            request->content_length = request->netconn_stream.content_length = ~0ull;
+            request->content_length = ~0ull;
         else
             request->content_length = wcstoull( buf, NULL, 10 );
-
-        request->netconn_stream.content_length = request->content_length;
-        request->netconn_stream.content_read = 0;
 
         buflen = sizeof(buf);
         if (!query_headers( request, WINHTTP_QUERY_TRANSFER_ENCODING, NULL, buf, &buflen, NULL ) &&
@@ -2878,15 +2835,15 @@ static DWORD set_content_length( struct request *request, DWORD status )
             if (!(chunked_stream = malloc( sizeof(*chunked_stream) ))) return ERROR_OUTOFMEMORY;
 
             chunked_stream->data_stream.vtbl = &chunked_stream_vtbl;
-            chunked_stream->buf_size = chunked_stream->buf_pos = 0;
+            chunked_stream->buf.size = chunked_stream->buf.pos = 0;
             chunked_stream->chunk_size = 0;
             chunked_stream->state = CHUNKED_STREAM_STATE_READING_CHUNK_SIZE;
 
-            if (request->read_size)
+            if (request->read.size)
             {
-                memcpy( chunked_stream->buf, request->read_buf + request->read_pos, request->read_size );
-                chunked_stream->buf_size = request->read_size;
-                request->read_size = request->read_pos = 0;
+                memcpy( chunked_stream->buf.buf, request->read.buf + request->read.pos, request->read.size );
+                chunked_stream->buf.size = request->read.size;
+                request->read.size = request->read.pos = 0;
             }
             request->data_stream = &chunked_stream->data_stream;
             request->content_length = ~0ull;
@@ -2912,8 +2869,32 @@ static DWORD set_content_length( struct request *request, DWORD status )
 /* remove some amount of data from the read buffer */
 static void remove_data( struct request *request, int count )
 {
-    if (!(request->read_size -= count)) request->read_pos = 0;
-    else request->read_pos += count;
+    if (!(request->read.size -= count)) request->read.pos = 0;
+    else request->read.pos += count;
+}
+
+/* read some more data into the read buffer */
+static DWORD read_more_data( struct request *request, int max_len, BOOL notify )
+{
+    int len;
+    DWORD ret;
+
+    if (request->read.pos)
+    {
+        if (request->read.size) memmove( request->read.buf, request->read.buf + request->read.pos, request->read.size );
+        request->read.pos = 0;
+    }
+    if (max_len == -1) max_len = sizeof(request->read.buf);
+
+    if (notify) send_callback( &request->hdr, WINHTTP_CALLBACK_STATUS_RECEIVING_RESPONSE, NULL, 0 );
+
+    ret = netconn_recv( request->netconn, request->read.buf + request->read.size, max_len - request->read.size, 0, &len );
+
+    if (notify) send_callback( &request->hdr, WINHTTP_CALLBACK_STATUS_RESPONSE_RECEIVED, &len, sizeof(len) );
+
+    request->read_reply_len += len;
+    request->read.size += len;
+    return ret;
 }
 
 static DWORD read_line( struct request *request, char *buffer, DWORD *len )
@@ -2923,22 +2904,22 @@ static DWORD read_line( struct request *request, char *buffer, DWORD *len )
 
     for (;;)
     {
-        char *eol = memchr( request->read_buf + request->read_pos, '\n', request->read_size );
+        char *eol = memchr( request->read.buf + request->read.pos, '\n', request->read.size );
         if (eol)
         {
-            count = eol - (request->read_buf + request->read_pos);
+            count = eol - (char *)(request->read.buf + request->read.pos);
             bytes_read = count + 1;
         }
-        else count = bytes_read = request->read_size;
+        else count = bytes_read = request->read.size;
 
         count = min( count, *len - pos );
-        memcpy( buffer + pos, request->read_buf + request->read_pos, count );
+        memcpy( buffer + pos, request->read.buf + request->read.pos, count );
         pos += count;
         remove_data( request, bytes_read );
         if (eol) break;
 
         if ((ret = read_more_data( request, -1, FALSE ))) return ret;
-        if (!request->read_size)
+        if (!request->read.size)
         {
             *len = 0;
             TRACE("returning empty string\n");
@@ -3432,7 +3413,7 @@ BOOL WINAPI WinHttpReceiveResponse( HINTERNET hrequest, LPVOID reserved )
 static BOOL skip_async_queue( struct request *request, BOOL *wont_block, DWORD to_read )
 {
     to_read = min( to_read, request->content_length - request->content_read );
-    *wont_block = end_of_data_stream( request ) || query_data_stream( request ) >= to_read;
+    *wont_block = end_of_data_stream( request ) || request->read.size >= to_read;
     return request->hdr.recursion_count < 3 && *wont_block;
 }
 
@@ -3442,11 +3423,7 @@ static DWORD query_data_available( struct request *request, DWORD *available, BO
 
     if (!request->content_length || end_of_data_stream( request )) goto done;
 
-    if (!(count = query_data_stream( request )))
-    {
-        if ((ret = refill_buffer( request, async ))) goto done;
-        count = query_data_stream( request );
-    }
+    ret = query_data_stream( request, &count );
 
 done:
     TRACE( "%lu bytes available\n", count );
@@ -3855,18 +3832,18 @@ HINTERNET WINAPI WinHttpWebSocketCompleteUpgrade( HINTERNET hrequest, DWORD_PTR 
     socket->hdr.flags = request->connect->hdr.flags & WINHTTP_FLAG_ASYNC;
     socket->keepalive_interval = 30000;
     socket->send_buffer_size = request->websocket_send_buffer_size;
-    if (request->read_size)
+    if (request->read.size)
     {
-        if (!(socket->read_buffer = malloc( request->read_size )))
+        if (!(socket->read_buffer = malloc( request->read.size )))
         {
             ERR( "No memory.\n" );
             free( socket );
             release_object( &request->hdr );
             return NULL;
         }
-        socket->bytes_in_read_buffer = request->read_size;
-        memcpy( socket->read_buffer, request->read_buf + request->read_pos, request->read_size );
-        request->read_pos = request->read_size = 0;
+        socket->bytes_in_read_buffer = request->read.size;
+        memcpy( socket->read_buffer, request->read.buf + request->read.pos, request->read.size );
+        request->read.pos = request->read.size = 0;
     }
     InitializeSRWLock( &socket->send_lock );
     init_queue( &socket->send_q );

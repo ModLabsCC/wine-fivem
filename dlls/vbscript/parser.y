@@ -136,11 +136,14 @@ static statement_t *link_statements(statement_t*,statement_t*);
 %token <dbl> tDouble
 %token <date> tDate
 
+%right tNOT
+%left '=' tNEQ '>' '<' tGTEQ tLTEQ tIS
+
 %type <statement> Statement SimpleStatement StatementNl StatementsNl StatementsNl_opt BodyStatements IfStatement Else_opt
 %type <statement> GlobalDimDeclaration StatementsBody StatementsBody_opt
 %type <expression> Expression LiteralExpression PrimaryExpression EqualityExpression CallExpression ExpressionNl_opt
 %type <expression> ConcatExpression AdditiveExpression ModExpression IntdivExpression MultiplicativeExpression ExpExpression
-%type <expression> NotExpression UnaryExpression AndExpression OrExpression XorExpression EqvExpression SignExpression
+%type <expression> UnaryExpression AndExpression OrExpression XorExpression EqvExpression SignExpression
 %type <expression> ConstExpression NumericLiteralExpression
 %type <member> MemberExpression
 %type <expression> Arguments ArgumentList ArgumentList_opt Step_opt ExpressionList
@@ -391,22 +394,19 @@ OrExpression
     | OrExpression tOR AndExpression            { $$ = new_binary_expression(ctx, EXPR_OR, $1, $3); CHECK_ERROR; }
 
 AndExpression
-    : NotExpression                             { $$ = $1; }
-    | AndExpression tAND NotExpression          { $$ = new_binary_expression(ctx, EXPR_AND, $1, $3); CHECK_ERROR; }
-
-NotExpression
-    : EqualityExpression            { $$ = $1; }
-    | tNOT NotExpression            { $$ = new_unary_expression(ctx, EXPR_NOT, $2); CHECK_ERROR; }
+    : EqualityExpression                            { $$ = $1; }
+    | AndExpression tAND EqualityExpression         { $$ = new_binary_expression(ctx, EXPR_AND, $1, $3); CHECK_ERROR; }
 
 EqualityExpression
-    : ConcatExpression                          { $$ = $1; }
-    | EqualityExpression '=' ConcatExpression   { $$ = new_binary_expression(ctx, EXPR_EQUAL, $1, $3); CHECK_ERROR; }
-    | EqualityExpression tNEQ ConcatExpression  { $$ = new_binary_expression(ctx, EXPR_NEQUAL, $1, $3); CHECK_ERROR; }
-    | EqualityExpression '>' ConcatExpression   { $$ = new_binary_expression(ctx, EXPR_GT, $1, $3); CHECK_ERROR; }
-    | EqualityExpression '<' ConcatExpression   { $$ = new_binary_expression(ctx, EXPR_LT, $1, $3); CHECK_ERROR; }
-    | EqualityExpression tGTEQ ConcatExpression { $$ = new_binary_expression(ctx, EXPR_GTEQ, $1, $3); CHECK_ERROR; }
-    | EqualityExpression tLTEQ ConcatExpression { $$ = new_binary_expression(ctx, EXPR_LTEQ, $1, $3); CHECK_ERROR; }
-    | EqualityExpression tIS ConcatExpression   { $$ = new_binary_expression(ctx, EXPR_IS, $1, $3); CHECK_ERROR; }
+    : ConcatExpression                              { $$ = $1; }
+    | tNOT EqualityExpression                       { $$ = new_unary_expression(ctx, EXPR_NOT, $2); CHECK_ERROR; }
+    | EqualityExpression '=' EqualityExpression     { $$ = new_binary_expression(ctx, EXPR_EQUAL, $1, $3); CHECK_ERROR; }
+    | EqualityExpression tNEQ EqualityExpression    { $$ = new_binary_expression(ctx, EXPR_NEQUAL, $1, $3); CHECK_ERROR; }
+    | EqualityExpression '>' EqualityExpression     { $$ = new_binary_expression(ctx, EXPR_GT, $1, $3); CHECK_ERROR; }
+    | EqualityExpression '<' EqualityExpression     { $$ = new_binary_expression(ctx, EXPR_LT, $1, $3); CHECK_ERROR; }
+    | EqualityExpression tGTEQ EqualityExpression   { $$ = new_binary_expression(ctx, EXPR_GTEQ, $1, $3); CHECK_ERROR; }
+    | EqualityExpression tLTEQ EqualityExpression   { $$ = new_binary_expression(ctx, EXPR_LTEQ, $1, $3); CHECK_ERROR; }
+    | EqualityExpression tIS EqualityExpression     { $$ = new_binary_expression(ctx, EXPR_IS, $1, $3); CHECK_ERROR; }
 
 ConcatExpression
     : AdditiveExpression                        { $$ = $1; }
@@ -514,6 +514,7 @@ Storage_opt
 
 Storage
     : tPUBLIC tDEFAULT              { $$ = STORAGE_IS_DEFAULT; }
+    | tDEFAULT tPRIVATE             { ctx->error_loc = @1; ctx->hres = MAKE_VBSERROR(VBSE_DEFAULT_MUST_BE_PUBLIC); CHECK_ERROR; }
     | tPUBLIC                       { $$ = 0; }
     | tPRIVATE                      { $$ = STORAGE_IS_PRIVATE; }
 
@@ -760,8 +761,7 @@ static call_expression_t *make_call_expression(parser_ctx_t *ctx, expression_t *
     }
 
     if(call_expr->args->next) {
-        FIXME("Invalid syntax: invalid use of parentheses for arguments\n");
-        ctx->hres = E_FAIL;
+        ctx->hres = MAKE_VBSERROR(VBSE_CANNOT_USE_PARENS_CALLING_SUB);
         ctx->error_loc = ctx->ptr - ctx->code;
         return NULL;
     }
@@ -1136,15 +1136,13 @@ static class_decl_t *add_class_function(parser_ctx_t *ctx, class_decl_t *class_d
     for(iter = class_decl->funcs; iter; iter = iter->next) {
         if(!wcsicmp(iter->name, decl->name)) {
             if(decl->type == FUNC_SUB || decl->type == FUNC_FUNCTION) {
-                FIXME("Redefinition of %s::%s\n", debugstr_w(class_decl->name), debugstr_w(decl->name));
-                ctx->hres = E_FAIL;
+                ctx->hres = MAKE_VBSERROR(VBSE_NAME_REDEFINED);
                 return NULL;
             }
 
             while(1) {
                 if(iter->type == decl->type) {
-                    FIXME("Redefinition of %s::%s\n", debugstr_w(class_decl->name), debugstr_w(decl->name));
-                    ctx->hres = E_FAIL;
+                    ctx->hres = MAKE_VBSERROR(VBSE_NAME_REDEFINED);
                     return NULL;
                 }
                 if(!iter->next_prop_func)

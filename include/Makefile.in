@@ -92,6 +92,7 @@ SOURCES = \
 	common.ver \
 	commoncontrols.idl \
 	compobj.h \
+	compressapi.h \
 	comsvcs.idl \
 	concurrencysal.h \
 	config.h.in \
@@ -1040,6 +1041,7 @@ SOURCES = \
 	windows.graphics.capture.idl \
 	windows.graphics.capture.interop.idl \
 	windows.graphics.directx.direct3d11.idl \
+	windows.graphics.directx.direct3d11.interop.idl \
 	windows.graphics.directx.idl \
 	windows.graphics.display.idl \
 	windows.graphics.effects.idl \

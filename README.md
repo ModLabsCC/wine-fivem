@@ -116,8 +116,8 @@ support kernel threads may be supported in the future.
 To build Wine, do:
 
 ```
-./configure
-make
+./configure --enable-archs=i386,x86_64
+make -j"$(nproc)"
 ```
 
 This will build the program "wine" and numerous support libraries/binaries.

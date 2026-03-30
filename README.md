@@ -167,6 +167,57 @@ will get a crash log that you should attach to your report when filing
 a bug.
 
 
+## FIVEM URL HANDLER (LINUX)
+
+To open `fivem://...` links with this build, create a small wrapper and
+desktop entry.
+
+1) Create `~/.local/bin/fivem-url-handler`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+url="${1:-}"
+wine_prefix="${WINEPREFIX:-/path/to/prefix}"
+wine_bin="${WINE_BIN:-/path/to/wine/wine}"
+fivem_dir="${FIVEM_DIR:-/path/to/FiveM}"
+fivem_exe="${FIVEM_EXE:-${fivem_dir}/FiveM.exe}"
+export WINEPREFIX="${wine_prefix}"
+
+cd "${fivem_dir}" || exit 1
+exec "${wine_bin}" "${fivem_exe}" "${url}"
+```
+
+Either edit those defaults or export `WINEPREFIX`, `WINE_BIN`, `FIVEM_DIR`,
+and `FIVEM_EXE`.
+
+Then mark it executable:
+
+```bash
+chmod +x ~/.local/bin/fivem-url-handler
+```
+
+2) Create `~/.local/share/applications/fivem-handler.desktop`:
+
+```ini
+[Desktop Entry]
+Name=FiveM Protocol Handler
+Type=Application
+Terminal=false
+NoDisplay=true
+Exec=/home/YOUR_USER/.local/bin/fivem-url-handler "%u"
+MimeType=x-scheme-handler/fivem;
+```
+
+3) Register the handler:
+
+```bash
+xdg-mime default fivem-handler.desktop x-scheme-handler/fivem
+update-desktop-database ~/.local/share/applications >/dev/null 2>&1 || true
+```
+
+
 ## GETTING MORE INFORMATION
 
 - **WWW**: A great deal of information about Wine is available from WineHQ at

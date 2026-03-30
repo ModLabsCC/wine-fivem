@@ -13,29 +13,49 @@ LICENSE for the details.
 
 ## QUICK START
 
-From the top-level directory of the Wine source (which contains this file),
-run:
+This fork is primarily used for FiveM. From the top-level source directory
+(which contains this file), use this WoW64 workflow:
 
 ```
-./configure
-make
+./configure --enable-archs=i386,x86_64
+make -j"$(nproc)"
 ```
 
-Then either install Wine:
+Re-run `make -j"$(nproc)"` after source changes.
+
+Run directly from the build directory:
 
 ```
-make install
+./wine /path/to/FiveM/FiveM.exe
 ```
 
-Or run Wine directly from the build directory:
+Replace `/path/to/FiveM/FiveM.exe` with your local install path.
+
+Typical runtime environment used with this tree:
 
 ```
-./wine notepad
+export WINE_ENABLE_FIVEM_VMEM_HACKS=1
+export WINE_ENABLE_FIVEM_ADHESIVE_UD2_HACK=1
+export WINE_FIVEM_HIDE_WINE_EXPORTS=1
+export WINE_FIVEM_ALLOW_ADHESIVE_INIT_FAILURE=1
+export vk_xwayland_wait_ready=false
 ```
 
-Run programs as `wine program`. For more information and problem
-resolution, read the rest of this file, the Wine man page, and
-especially the wealth of information found at https://www.winehq.org.
+Optional debug/runtime toggles:
+
+```
+export WINE_FIVEM_ADHESIVE_SIGNAL_DEBUG=1
+# export WINE_DISABLE_FIVEM_EXIT0_WAIT=1
+# export WINE_DISABLE_EXIT69_WAIT=1
+```
+
+Typical gamescope launch:
+
+```
+gamescope -w 1920 -h 1080 -W 3840 -H 2160 -f -- \
+  gamemoderun /path/to/wine/wine \
+  /path/to/FiveM/FiveM.exe
+```
 
 
 ## REQUIREMENTS
